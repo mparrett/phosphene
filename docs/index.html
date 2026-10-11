@@ -1,0 +1,262 @@
+<title>phosphene dev log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Instrument+Sans:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a single reading column; video plates break wider like a gallery wall.
+   Single-theme by choice: the page is the dark room the visualizer plays in. */
+:root {
+  --ground: #0e0b15;      /* desert night, violet-biased */
+  --plate: #17121f;       /* raised surfaces: code, figures */
+  --rule: #2c2438;
+  --sand: #eadfcb;        /* body text */
+  --dust: #a99c8c;        /* secondary text */
+  --sodium: #ffb04a;      /* accent: sodium lamp */
+  --uv: #b98cff;          /* second accent, used sparingly */
+  --display: "Unbounded", "Avenir Next", system-ui, sans-serif;
+  --body: "Instrument Sans", "Helvetica Neue", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--sand); font: 17px/1.62 var(--body); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 96px; }
+.col { max-width: 680px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.12; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.6rem, 8vw, 5.2rem); letter-spacing: -0.02em; }
+h2 { font-size: clamp(1.4rem, 3.4vw, 2rem); margin-top: 88px; }
+h3 { font-size: 1.05rem; font-weight: 500; margin-top: 36px; }
+p { margin: 14px 0 0; }
+a { color: var(--sodium); }
+.eyebrow { font: 600 12px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--sodium); }
+.lede { font-size: 1.2rem; color: var(--sand); max-width: 640px; margin-top: 20px; }
+.meta { font: 13px/1.6 var(--mono); color: var(--dust); margin-top: 18px; }
+code, pre { font-family: var(--mono); font-size: 0.86em; }
+:not(pre) > code { background: var(--plate); padding: 1px 5px; border-radius: 3px; color: #f3d9b0; }
+pre { background: var(--plate); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; overflow-x: auto; line-height: 1.5; margin: 18px 0 0; }
+.k { color: var(--uv); } .s { color: var(--sodium); } .c { color: #7d7290; }
+
+/* Video plates read as terminal windows: a thin title bar, then the picture. */
+figure { margin: 0; min-width: 0; }
+.term { background: #000; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+.term .bar { display: flex; gap: 6px; align-items: center; padding: 7px 10px; background: var(--plate); border-bottom: 1px solid var(--rule); font: 11px/1 var(--mono); color: var(--dust); }
+.term .bar i { width: 8px; height: 8px; border-radius: 50%; background: var(--rule); display: inline-block; }
+.term .bar span { margin-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.term video { display: block; width: 100%; aspect-ratio: 16 / 9; image-rendering: pixelated; background: #000; }
+figcaption { font-size: 14px; color: var(--dust); margin-top: 8px; line-height: 1.45; }
+figcaption b { color: var(--sand); font-weight: 600; }
+.hero { margin-top: 40px; }
+.grid { display: grid; gap: 22px; margin-top: 26px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+.grid.two { grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr)); }
+.sound { margin-top: 10px; font: 13px var(--mono); background: transparent; color: var(--sodium); border: 1px solid var(--sodium); border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+.sound:focus-visible, a:focus-visible { outline: 2px solid var(--uv); outline-offset: 2px; }
+
+/* Pipeline diagram: a horizontal chain that stacks on phones. */
+.pipe { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-top: 26px; }
+.stage { flex: 1 1 150px; min-width: 0; background: var(--plate); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; }
+.stage b { display: block; font: 600 13px var(--mono); color: var(--sodium); }
+.stage small { display: block; font-size: 13.5px; color: var(--dust); line-height: 1.4; margin-top: 4px; }
+.stage.hot { border-color: #5a4378; }
+.stage.hot b { color: var(--uv); }
+
+/* Half-block illustration */
+.cells { display: flex; gap: 28px; flex-wrap: wrap; align-items: center; margin-top: 22px; }
+.cell { width: 64px; height: 128px; border: 1px solid var(--rule); display: grid; grid-template-rows: 1fr 1fr; }
+.cell div:first-child { background: #ff7a3d; } .cell div:last-child { background: #3b2a7a; }
+.cells pre { margin: 0; flex: 1 1 300px; }
+
+table { border-collapse: collapse; width: 100%; font-size: 15px; font-variant-numeric: tabular-nums; }
+.tablewrap { overflow-x: auto; margin-top: 20px; }
+th, td { text-align: left; padding: 9px 12px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 600 11px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--dust); }
+td.n { font-family: var(--mono); white-space: nowrap; color: var(--sodium); }
+
+.log { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 0; }
+.log li { display: grid; grid-template-columns: 88px 1fr; gap: 16px; padding: 14px 0; border-top: 1px solid var(--rule); }
+.log li > * { min-width: 0; }
+.log .sha { font: 13px var(--mono); color: var(--uv); padding-top: 3px; }
+.log b { font-family: var(--display); font-weight: 500; font-size: 15px; }
+.log p { font-size: 15.5px; color: var(--dust); margin-top: 4px; }
+.keys kbd { font: 12px var(--mono); border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 3px; padding: 1px 6px; background: var(--plate); color: var(--sand); }
+@media (prefers-reduced-motion: reduce) { video { animation: none; } }
+@media (max-width: 520px) { .log li { grid-template-columns: 1fr; gap: 4px; } body { font-size: 16px; } }
+</style>
+
+<div class="wrap">
+  <header class="col">
+    <div class="eyebrow">dev log · sprint 1 · 2026-10-10</div>
+    <h1>phosphene</h1>
+    <p class="lede">A full-screen music visualizer for the terminal, written in let-go. You give it a wav or mp3 and it plays the track while painting it in truecolor half-blocks: Geiss plasma, MilkDrop feedback, AVS superscopes.</p>
+    <p class="meta">phosphene · 8 commits · ~1,290 lines of lg as of 2026-10-11 · captures rendered headless from the repo</p>
+  </header>
+
+  <figure class="hero">
+    <div class="term"><div class="bar"><i></i><i></i><i></i><span>bin/phosphene test.wav — auto mode, 0:13 → 0:18</span></div>
+      <video id="hero" src="clips/transition.mp4" poster="clips/transition.png" autoplay muted loop playsinline></video></div>
+    <figcaption><b>A scene change on the phrase boundary.</b> At 32 beats the director hands the screen from the plasma to the MilkDrop “event horizon” preset. The new scene starts from the plasma's last frame, so the ribbons get pulled into the vortex while the two crossfade. Every capture on this page includes the matching slice of the 124 BPM test track.</figcaption>
+    <button class="sound" id="sound" type="button">Unmute this clip</button>
+  </figure>
+
+  <section class="col">
+    <h2>How a frame gets made</h2>
+    <p>Everything outside ffmpeg and afplay is let-go running on the bytecode VM. The audio is analysed once on load, then each frame turns features into pixels and pixels into one long escape-sequence string.</p>
+  </section>
+  <div class="pipe" role="list">
+    <div class="stage" role="listitem"><b>decode</b><small>ffmpeg → mono 22.05 kHz → perl unpack → decimal text → <code>double-array</code></small></div>
+    <div class="stage" role="listitem"><b>pre-pass</b><small>one-pole bass filter per 1/60 s hop; onsets where bass jumps 1.35× its trailing mean</small></div>
+    <div class="stage" role="listitem"><b>listen</b><small>1024-point FFT per frame → 32 log bands, bass / mid / treb normalised to ≈1.0</small></div>
+    <div class="stage hot" role="listitem"><b>director</b><small>scene = effect × preset; switches every 32 beats; seeded crossfade</small></div>
+    <div class="stage hot" role="listitem"><b>effect</b><small>plasma, milk or superscope draws into a float RGB buffer</small></div>
+    <div class="stage" role="listitem"><b>post</b><small>bloom, hue wobble, vignette, beat flash, on the displayed copy only</small></div>
+    <div class="stage" role="listitem"><b>encode</b><small><code>▀</code> half-blocks, 24-bit fg/bg, synchronized-update frame</small></div>
+  </div>
+
+  <section class="col">
+    <h3>Two pixels per character</h3>
+    <p>A terminal cell is about twice as tall as it is wide. Print the upper-half block <code>▀</code> with one truecolor foreground and a different background, and each cell carries two square pixels. A 192 × 54 terminal becomes a 192 × 108 canvas, the resolution of every capture here.</p>
+    <div class="cells">
+      <div class="cell" aria-label="one terminal cell split into two pixels"><div></div><div></div></div>
+      <pre><span class="c">;; one cell: top pixel = fg, bottom pixel = bg</span>
+ESC[38;2;<span class="s">255;122;61</span>m   <span class="c">; fg  sodium orange</span>
+ESC[48;2;<span class="s">59;42;122</span>m    <span class="c">; bg  deep violet</span>
+▀</pre>
+    </div>
+    <p>The encoder skips a colour code when it matches the cell to its left. It also wraps each frame in mode 2026 (synchronized output), so terminals that support it swap whole frames instead of tearing mid-draw.</p>
+
+    <h3>Why the audio goes through text</h3>
+    <p>The odd step in the decode chain is there because let-go reads files as strings. Raw PCM bytes above <code>0x7f</code> came back as U+FFFD replacement characters, so the samples cross the boundary as one decimal integer per line. Perl's <code>unpack</code> turned out about 3× faster than <code>od</code> for that.</p>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>Engine 1 · Geiss plasma</h2>
+      <p>A sum of four sines read from a 4096-entry lookup table: two axis waves, a diagonal and a slow ring. A second sine field displaces the coordinates first, and the bass sets both how far it pushes and how fast the clock runs. The value indexes a 256-entry cosine palette with two dark troughs per cycle. Without the troughs it looks like a screensaver; with them it becomes ribbons of light on black, which is the Geiss look. Each frame blends over the last one, so the colour flows.</p>
+    </div>
+    <div class="grid two">
+      <figure><div class="term"><div class="bar"><i></i><i></i><i></i><span>--fx plasma</span></div>
+        <video src="clips/plasma.mp4" poster="clips/plasma.png" autoplay muted loop playsinline></video></div>
+        <figcaption><b>plasma.</b> The palette rotates every 16 beats through dusk teal/coral, sodium amber, ultraviolet, acid chrome and magenta.</figcaption></figure>
+      <figure><pre><span class="c">;; inner loop, written to lower to native Go later</span>
+(<span class="k">let</span> [s (+ (fsin l (+ u dv))
+         (fsin l (+ v du))
+         (fsin l (+ (* 0.5 (+ u v)) t))
+         (* 0.6 (fsin l (- (* 0.35 r2) (* 2.0 t)))))
+      k (bit-and (int (* 256.0 (+ phase (* 0.125 s)))) 255)]
+  (aset r i (+ (* keep (aget r i)) (* fresh (aget pr k))))
+  …)</pre>
+      <figcaption><code>fsin</code> is a macro over the lookup table, so the VM makes no function call per sample.</figcaption></figure>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>Engine 2 · MilkDrop feedback</h2>
+      <p>Each frame begins as the previous one, pulled through a 32 × 18 warp mesh and decayed slightly, then a waveform is drawn on top. Zoom in and you get tunnels; rotate and you get vortices; wobble and you get smoke. As in MilkDrop, the per-vertex maths (a preset's zoom, rotation, drift and warp, bent by each vertex's radius and angle) runs on the coarse mesh in plain lg. Only the per-pixel resample is a kernel: it interpolates a source coordinate from the mesh cell, then samples the old frame bilinearly. That bilinear tap is where MilkDrop's softness comes from.</p>
+    </div>
+    <div class="grid">
+      <figure><div class="term"><div class="bar"><i></i><i></i><i></i><span>milk · event horizon</span></div>
+        <video src="clips/milk-event-horizon.mp4" poster="clips/milk-event-horizon.png" autoplay muted loop playsinline></video></div>
+        <figcaption><b>event horizon.</b> Zoom below 1 pulls everything inward; rotation grows with radius.</figcaption></figure>
+      <figure><div class="term"><div class="bar"><i></i><i></i><i></i><span>milk · lightspeed</span></div>
+        <video src="clips/milk-lightspeed.mp4" poster="clips/milk-lightspeed.png" autoplay muted loop playsinline></video></div>
+        <figcaption><b>lightspeed.</b> Zoom outward on the bass; a pseudo-XY scope at the centre.</figcaption></figure>
+      <figure><div class="term"><div class="bar"><i></i><i></i><i></i><span>milk · desert wind</span></div>
+        <video src="clips/milk-desert-wind.mp4" poster="clips/milk-desert-wind.png" autoplay muted loop playsinline></video></div>
+        <figcaption><b>desert wind.</b> A sideways drift carries amber waveforms off the left edge.</figcaption></figure>
+      <figure><div class="term"><div class="bar"><i></i><i></i><i></i><span>milk · quantum foam</span></div>
+        <video src="clips/milk-quantum-foam.mp4" poster="clips/milk-quantum-foam.png" autoplay muted loop playsinline></video></div>
+        <figcaption><b>quantum foam.</b> The treble drives the wobble; per-vertex zoom ripples by angle.</figcaption></figure>
+    </div>
+    <div class="col">
+      <h3>The first version blew out</h3>
+      <p>Lightspeed filled the screen with solid cyan within a few seconds. Zooming in spreads the centre outward, and the waveform was added on top every frame, so the loop gain was above 1. MilkDrop blends its waves rather than adding them, and phosphene now does the same with <code>fb/blend!</code>: a pixel moves toward the wave colour and can never pass it. Brightness above 1.0 still exists, but only as a soft clip toward white in the encoder.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>Engine 3 · AVS superscope</h2>
+      <p>In Winamp's AVS a superscope was a few lines of code run once per point: given <code>i</code> (0 to 1 along the scope) and <code>v</code> (the waveform at that point), set <code>x</code>, <code>y</code> and a colour. phosphene keeps that shape. Each preset is a small namespace holding a map of lg functions: <code>:point</code>, and optionally <code>:frame</code>, <code>:beat</code> and <code>:init</code>, drawn as lines or dots over fading or warped trails. A kit adds 3D rotation and perspective.</p>
+      <pre>(<span class="k">def</span> preset
+  {<span class="s">:name</span> <span class="s">"rose bloom"</span>
+   <span class="s">:n</span> 520 <span class="s">:mode</span> <span class="s">:dots</span> <span class="s">:decay</span> 0.86 <span class="s">:zoom</span> 0.985 <span class="s">:rot</span> -0.02
+   <span class="s">:init</span> {<span class="s">:k</span> 3.0}
+   <span class="s">:beat</span>  (<span class="k">fn</span> [s _a] (assoc s <span class="s">:k</span> (nth [2.0 3.0 5.0 7.0 1.5 2.5] (mod (inc (int (<span class="s">:k</span> s))) 6))))
+   <span class="s">:point</span> (<span class="k">fn</span> [{<span class="s">:keys</span> [k t bass-att beat-env]} i v]
+            (<span class="k">let</span> [th (+ (* i 2.0 k/TAU) (* 0.15 t))
+                  r  (* (math/cos (* k th)) (+ 0.7 (* 0.15 bass-att) (* 0.35 v)))
+                  [cr cg cb] (k/hue (+ 0.02 (* 0.12 (math/abs r))) (+ 1.0 beat-env))]
+              [(* r (math/cos th)) (* r (math/sin th)) cr cg cb]))})</pre>
+      <p>Because a preset is just data and functions in its own file, and <code>eval</code> and <code>load-string</code> work on the VM, editing one live from inside the visualizer is within reach. That's the stretch goal.</p>
+    </div>
+    <div class="grid">
+      <figure><div class="term"><div class="bar"><i></i><i></i><i></i><span>superscope · double helix</span></div>
+        <video src="clips/scope-helix.mp4" poster="clips/scope-helix.png" autoplay muted loop playsinline></video></div>
+        <figcaption><b>double helix.</b> Points alternate strands, so drawing them as one line traces the rungs.</figcaption></figure>
+      <figure><div class="term"><div class="bar"><i></i><i></i><i></i><span>superscope · torus knot</span></div>
+        <video src="clips/scope-knot.mp4" poster="clips/scope-knot.png" autoplay muted loop playsinline></video></div>
+        <figcaption><b>torus knot.</b> The winding steps 3 → 5 → 7 → 4 on every fourth beat.</figcaption></figure>
+      <figure><div class="term"><div class="bar"><i></i><i></i><i></i><span>superscope · rose bloom</span></div>
+        <video src="clips/scope-rose.mp4" poster="clips/scope-rose.png" autoplay muted loop playsinline></video></div>
+        <figcaption><b>rose bloom.</b> The preset above; the petal count changes on each beat.</figcaption></figure>
+      <figure><div class="term"><div class="bar"><i></i><i></i><i></i><span>superscope · orb</span></div>
+        <video src="clips/scope-orb.mp4" poster="clips/scope-orb.png" autoplay muted loop playsinline></video></div>
+        <figcaption><b>orb.</b> A Fibonacci sphere; the waveform pushes points off the surface.</figcaption></figure>
+      <figure><div class="term"><div class="bar"><i></i><i></i><i></i><span>superscope · aurora</span></div>
+        <video src="clips/scope-aurora.mp4" poster="clips/scope-aurora.png" autoplay muted loop playsinline></video></div>
+        <figcaption><b>aurora.</b> A full-width waveform; an upward warp turns each frame's line into a rising curtain.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="col">
+    <h2>Scenes, transitions and post</h2>
+    <p>Every effect and preset pair is a scene, ten in auto mode. The director interleaves the engines and changes scene every 32 beats, or every 30 seconds on a track where it can't find onsets. A new scene starts from a copy of the frame on screen, the way MilkDrop morphs one preset into the next, and a 1.5-second smoothstep crossfade covers its first frames.</p>
+    <p>Post-processing runs on a separate copy of the frame: a half-resolution bright pass with a separable box blur for bloom, a hue-rotation matrix that wobbles with the treble and kicks on beats, a vignette, and a small exposure lift on each beat. Scenes are seeded from the frame before post, so the glow never feeds back into the effects.</p>
+    <p class="keys">Live keys: <kbd>←</kbd> <kbd>→</kbd> scene · <kbd>a</kbd> auto · <kbd>b</kbd> bloom · <kbd>c</kbd> colour cycling · <kbd>space</kbd> pause · <kbd>q</kbd> quit</p>
+
+    <h2>Running on the VM</h2>
+    <p>Everything here runs on let-go's bytecode interpreter. The numbers below were measured on 2026-10-10 on the dev machine, at <code>--scale 2</code> (half-resolution canvas) in a 160 × 48 terminal.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Measured</th><th>Value</th><th>What it means</th></tr></thead>
+      <tbody>
+        <tr><td>Primitive op</td><td class="n">~150 ns</td><td>A native call such as <code>aget</code>, <code>nth</code> or <code>.append</code> costs ~0.4 µs.</td></tr>
+        <tr><td>1024-point FFT</td><td class="n">~6 ms</td><td>Fine once per frame, too slow for a whole-track pre-pass.</td></tr>
+        <tr><td>4 futures vs 1 thread</td><td class="n">1.3 s vs 1.8 s</td><td>Futures barely run in parallel, so one thread does the work.</td></tr>
+        <tr><td>ANSI encode, 160 × 48</td><td class="n">15–45 ms</td><td>Depends on how many neighbouring cells share colours.</td></tr>
+        <tr><td>Live frame rate</td><td class="n">~10–20 fps</td><td>Superscope is fastest; milk is slowest.</td></tr>
+      </tbody>
+    </table></div>
+    <p>That's watchable but not smooth. The plan is to get the speed from let-go's AOT compiler rather than from tuning for the VM. Every hot loop is already written as a kernel: flat <code>double-array</code>s, <code>^doubles</code> and <code>^double</code> hints, and <code>if</code>/<code>do</code> loop bodies. That's the shape <a href="https://github.com/nooga/let-go/pull/1057">nooga/let-go#1057</a> lowers to native typed-array access, measured there at about 230× the VM on a 1M-element sum.</p>
+
+    <h2>Build log</h2>
+  </section>
+  <ol class="log col">
+    <li><span class="sha">a00643b</span><div><b>Core</b><p>Decode, onset pre-pass, FFT features, half-block renderer, afplay sync (pause is SIGSTOP), HUD, and headless <code>--dump</code> / <code>--bench</code> so every later step could be checked as an image. Found: bytes read as runes, and futures that don't parallelise.</p></div></li>
+    <li><span class="sha">1ca4312</span><div><b>Geiss plasma</b><p>The first palettes looked like a screensaver; dark troughs fixed it. Headless dumps also learned to seed the clock and beat count from track time, so a dump matches what the live run shows at that moment.</p></div></li>
+    <li><span class="sha">3979dfd</span><div><b>MilkDrop feedback</b><p>Mesh warp, four presets, and the switch from additive to blended waves after lightspeed saturated.</p></div></li>
+    <li><span class="sha">2a38d0c</span><div><b>AVS superscope</b><p>Five presets, a 3D kit, and <code>--preset N</code>. The helix first rendered as solid ribbons; dropping from 220 points to 64 brought back the ladder.</p></div></li>
+    <li><span class="sha">74c10f9</span><div><b>Director</b><p>Scenes, phrase-boundary switching, seeded crossfades and the keys to drive them.</p></div></li>
+    <li><span class="sha">6f147d8</span><div><b>Post</b><p>Bloom, hue cycling, vignette and beat flash. The first bloom was far too strong. Checking it also caught a test-script bug: zsh doesn't word-split <code>--fx $fx</code>, so three "different" before/after shots were all plasma.</p></div></li>
+    <li><span class="sha">2b6b756</span><div><b>Captures for this page</b><p>A <code>--frames</code> flag writes one continuous run of frames, so feedback trails carry across the clip. Rendering four clips in parallel turned up a race: runs decoding the same track shared a temp file, and the first to finish deleted the others' samples.</p></div></li>
+  </ol>
+
+  <section class="col">
+    <h2>Next</h2>
+    <p><b>AOT kernels.</b> Lower the plasma, warp, mix, post and encoder kernels once typed-array lowering lands, and drive them from the same lg code.</p>
+    <p><b>Live preset editor.</b> A legmacs-style pane to edit a superscope or milk preset's lg and hot-reload it while the music plays.</p>
+    <p><b>Additional effects sprint.</b> Extend past the Winamp exemplars into effects of phosphene's own.</p>
+    <p><b>Slab.</b> Feed live audio from the DAW instead of a file.</p>
+  </section>
+</div>
+<script>
+  const hero = document.getElementById('hero');
+  const btn = document.getElementById('sound');
+  btn.addEventListener('click', () => {
+    hero.muted = !hero.muted;
+    if (!hero.muted) { hero.currentTime = 0; hero.play().catch(() => {}); }
+    btn.textContent = hero.muted ? 'Unmute this clip' : 'Mute';
+  });
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.querySelectorAll('video').forEach(v => { v.removeAttribute('autoplay'); v.pause(); v.controls = true; });
+  }
+</script>

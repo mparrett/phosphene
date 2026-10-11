@@ -3,3 +3,4 @@
 *.wav
 *.mp3
 .DS_Store
+!docs/clips/*.png
