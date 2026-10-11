@@ -13,6 +13,8 @@ which is lossless: the decoded samples are identical to the WAVs.
   drop spans eight bars, so this repeats bars 25–32 twice. Delay and room
   tails are wrapped into its opening; no fade-in or fade-out. Repeat the
   entire file to loop it. Timing is within one sample of 16 bars at 124 BPM.
+- `sodium_uv_full.mp3`: the full track as a 320 kbps MP3 for easy sharing,
+  also at <https://phosphene.aibuilds.me/sodium-uv.mp3>.
 
 | Bars | Time | Section |
 | --- | --- | --- |

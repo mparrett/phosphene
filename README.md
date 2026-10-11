@@ -30,6 +30,8 @@ the editable Slab project. The music is
 
     bin/phosphene music/sodium-uv/sodium_uv_full.flac
 
+To just listen: [phosphene.aibuilds.me/sodium-uv.mp3](https://phosphene.aibuilds.me/sodium-uv.mp3).
+
 ## Limitations
 
 - **Playback is macOS only.** It shells out to `afplay`; on Linux the visuals

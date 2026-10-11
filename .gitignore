@@ -4,3 +4,5 @@
 *.mp3
 .DS_Store
 !docs/clips/*.png
+!docs/*.mp3
+!music/**/*.mp3
