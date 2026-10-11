@@ -90,6 +90,7 @@ td.n { font-family: var(--mono); white-space: nowrap; color: var(--phosphor); }
 .log .sha { font: 13px var(--mono); color: var(--uv); padding-top: 3px; }
 .log b { font-family: var(--display); font-weight: 500; font-size: 15px; }
 .log p { font-size: 16.5px; color: var(--dust); margin-top: 4px; }
+.foot { margin-top: 88px; padding-top: 18px; border-top: 1px solid var(--rule); font: 13px/1.6 var(--mono); color: var(--dust); }
 .keys kbd { font: 12px var(--mono); border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 3px; padding: 1px 6px; background: var(--plate); color: var(--sand); }
 @media (prefers-reduced-motion: reduce) { video { animation: none; } }
 @media (max-width: 520px) { .log li { grid-template-columns: 1fr; gap: 4px; } body { font-size: 17px; } }
@@ -102,7 +103,7 @@ td.n { font-family: var(--mono); white-space: nowrap; color: var(--phosphor); }
     <div class="eyebrow">dev log · sprint 1 · 2026-10-10</div>
     <h1>phosphene</h1>
     <p class="lede">A full-screen music visualizer for the terminal, written in let-go. You give it a wav or mp3 and it plays the track while painting it in truecolor half-blocks: Geiss plasma, MilkDrop feedback, AVS superscopes.</p>
-    <p class="meta">phosphene · 8 commits · ~1,290 lines of lg as of 2026-10-11 · captures rendered headless from the repo</p>
+    <p class="meta"><a href="https://github.com/mparrett/phosphene">github.com/mparrett/phosphene</a> · ~1,290 lines of lg as of 2026-10-11 · captures rendered headless from the repo</p>
   </header>
 
   <figure class="hero">
@@ -262,6 +263,9 @@ ESC[48;2;<span class="s">59;42;122</span>m    <span class="c">; bg  deep violet<
     <p><b>Additional effects sprint.</b> Extend past the Winamp exemplars into effects of phosphene's own.</p>
     <p><b>Slab.</b> Feed live audio from <a href="https://github.com/nooga/slab">Slab</a>, the livecoded DAW, instead of a file.</p>
   </section>
+  <footer class="col foot">
+    <p>Source, issues and the plan: <a href="https://github.com/mparrett/phosphene">github.com/mparrett/phosphene</a>. Code MIT.</p>
+  </footer>
 </div>
 <script>
   const hero = document.getElementById('hero');
