@@ -1,0 +1,172 @@
+(ns phosphene.fx.milk
+  "MilkDrop-style feedback: every frame starts as the previous one, pulled
+  through a warp mesh (zoom, rotate, translate, wobble) and decayed, then a
+  waveform is drawn on top. The trails and tunnels all come from that loop.
+
+  As in MilkDrop, the per-vertex maths runs on a coarse mesh (GX×GY) in plain
+  lg; only the per-pixel resample is a kernel."
+  (:require [math] [phosphene.fb :as fb] [phosphene.listen :as listen]))
+
+(def GX 32)
+(def GY 18)
+
+;; ── Kernels ─────────────────────────────────────────────────────────────
+
+(defn warp!
+  "Resamples src into dst through the mesh. mu/mv hold, per mesh vertex, the
+  source pixel coordinate; pixels interpolate their vertex cell, then sample
+  src bilinearly (that bilinear tap is where MilkDrop's softness comes from)."
+  [^doubles sr ^doubles sg ^doubles sb ^doubles dr ^doubles dg ^doubles db
+   ^doubles mu ^doubles mv w h gx gy ^double decay]
+  (let [gw (inc gx)
+        fxs (/ (double gx) w) fys (/ (double gy) h)
+        umax (- w 1.001) vmax (- h 1.001)]
+    (loop [y 0]
+      (if (< y h)
+        (let [gyf (* (+ y 0.5) fys)
+              j   (min (dec gy) (int gyf))
+              ty  (- gyf j)
+              row (* y w)]
+          (loop [x 0]
+            (if (< x w)
+              (let [gxf (* (+ x 0.5) fxs)
+                    i   (min (dec gx) (int gxf))
+                    tx  (- gxf i)
+                    k00 (+ i (* j gw)) k10 (inc k00) k01 (+ k00 gw) k11 (inc k01)
+                    ua  (+ (aget mu k00) (* tx (- (aget mu k10) (aget mu k00))))
+                    ub  (+ (aget mu k01) (* tx (- (aget mu k11) (aget mu k01))))
+                    va  (+ (aget mv k00) (* tx (- (aget mv k10) (aget mv k00))))
+                    vb  (+ (aget mv k01) (* tx (- (aget mv k11) (aget mv k01))))
+                    u   (max 0.0 (min umax (+ ua (* ty (- ub ua)))))
+                    v   (max 0.0 (min vmax (+ va (* ty (- vb va)))))
+                    x0  (int u) y0 (int v)
+                    ax  (- u x0) ay (- v y0)
+                    i00 (+ x0 (* y0 w)) i10 (inc i00) i01 (+ i00 w) i11 (inc i01)
+                    w00 (* decay (- 1.0 ax) (- 1.0 ay)) w10 (* decay ax (- 1.0 ay))
+                    w01 (* decay (- 1.0 ax) ay)         w11 (* decay ax ay)
+                    o   (+ row x)]
+                (aset dr o (+ (* w00 (aget sr i00)) (* w10 (aget sr i10)) (* w01 (aget sr i01)) (* w11 (aget sr i11))))
+                (aset dg o (+ (* w00 (aget sg i00)) (* w10 (aget sg i10)) (* w01 (aget sg i01)) (* w11 (aget sg i11))))
+                (aset db o (+ (* w00 (aget sb i00)) (* w10 (aget sb i10)) (* w01 (aget sb i01)) (* w11 (aget sb i11))))
+                (recur (inc x)))
+              nil))
+          (recur (inc y)))
+        nil))))
+
+(defn copy! [^doubles src ^doubles dst]
+  (let [n (alength src)]
+    (loop [i 0]
+      (if (< i n) (do (aset dst i (aget src i)) (recur (inc i))) nil))))
+
+;; ── Drawing ─────────────────────────────────────────────────────────────
+
+(defn- line! [f x0 y0 x1 y1 cr cg cb]
+  (let [n (int (max 1 (math/ceil (max (abs (- x1 x0)) (abs (- y1 y0))))))]
+    (loop [s 0]
+      (if (<= s n)
+        (let [k (/ (double s) n)]
+          (fb/blend! f (+ x0 (* k (- x1 x0))) (+ y0 (* k (- y1 y0))) cr cg cb 0.85)
+          (recur (inc s)))
+        nil))))
+
+(defn hue [h bright]
+  (let [c (fn [o] (* bright (+ 0.5 (* 0.5 (math/cos (* 2.0 math/PI (+ h o)))))))]
+    [(c 0.0) (c 0.67) (c 0.33)]))
+
+(defn- polyline! [f pts [cr cg cb] closed?]
+  (let [pts (if closed? (conj pts (first pts)) pts)]
+    (doseq [[[x0 y0] [x1 y1]] (partition 2 1 pts)]
+      (line! f x0 y0 x1 y1 cr cg cb))))
+
+(defn- wave-points
+  "Waveform shapes in pixel space, in MilkDrop's spirit."
+  [mode {:keys [w h]} wave amp t]
+  (let [cx (/ w 2.0) cy (/ h 2.0) R (/ h 2.0) N 96
+        step (quot listen/WAVE N)
+        s (fn [i] (aget wave (* (mod i N) step)))]
+    (case mode
+      :circle (vec (for [i (range N)]
+                     (let [a (+ (* 2.0 math/PI (/ i (double N))) (* 0.2 t))
+                           r (* R (+ 0.35 (* amp 0.35 (s i))))]
+                       [(+ cx (* r (math/cos a))) (+ cy (* r (math/sin a)))])))
+      :line   (vec (for [i (range N)]
+                     [(* w (/ i (dec N) 1.0)) (+ cy (* R amp 0.6 (s i)))]))
+      ;; Pseudo-XY: the wave against itself a quarter-window later.
+      :xy     (vec (for [i (range N)]
+                     [(+ cx (* R amp 0.9 (s i))) (+ cy (* R amp 0.9 (s (+ i 24))))])))))
+
+;; ── Presets ─────────────────────────────────────────────────────────────
+;; :frame maps audio features to warp params; :vertex (optional) bends them
+;; per mesh vertex from its radius/angle, like MilkDrop's per-vertex code.
+
+(def presets
+  [{:name "event horizon"
+    :frame (fn [{:keys [t bass-att mid-att beat-env]}]
+             {:zoom (+ 0.965 (* -0.03 beat-env)) :rot (+ 0.02 (* 0.015 mid-att))
+              :warp 0.4 :decay 0.975 :wave :circle :amp (+ 0.6 bass-att)
+              :hue (* 0.05 t) :bright 0.55})
+    :vertex (fn [p rad _ang] (assoc p :rot (* (:rot p) (+ 0.3 (* 2.5 rad)))))}
+   {:name "lightspeed"
+    :frame (fn [{:keys [t bass-att treb-att beat-env]}]
+             {:zoom (+ 1.02 (* 0.02 bass-att) (* 0.04 beat-env))
+              :rot (* 0.01 (math/sin (* 0.4 t))) :warp (+ 0.3 (* 0.6 treb-att))
+              :decay 0.93 :wave :xy :amp 1.2 :hue (+ 0.55 (* 0.1 (math/sin (* 0.2 t))))
+              :bright 0.7})
+    :vertex (fn [p rad _ang] (assoc p :zoom (+ 1.0 (* (- (:zoom p) 1.0) (+ 0.4 rad)))))}
+   {:name "desert wind"
+    :frame (fn [{:keys [t bass-att mid-att beat-env]}]
+             {:zoom 1.01 :rot 0.0 :dx (* 0.012 (+ 1.0 (* 0.5 mid-att)))
+              :dy (* 0.004 (math/sin (* 0.7 t))) :warp (+ 0.8 (* 0.8 bass-att))
+              :decay 0.965 :wave :line :amp (+ 0.8 (* 0.6 bass-att) beat-env)
+              :hue (+ 0.08 (* 0.04 (math/sin (* 0.3 t)))) :bright 0.6})}
+   {:name "quantum foam"
+    :frame (fn [{:keys [t mid-att treb-att beat-env]}]
+             {:zoom (+ 0.99 (* 0.02 (math/sin (* 0.5 t)))) :rot (* -0.03 mid-att)
+              :warp (+ 1.0 (* 1.6 treb-att)) :decay (- 0.985 (* 0.04 beat-env))
+              :wave :circle :amp (+ 1.0 treb-att) :hue (+ 0.75 (* 0.15 (math/sin (* 0.13 t))))
+              :bright 0.45})
+    :vertex (fn [p rad ang] (assoc p :zoom (+ (:zoom p) (* 0.03 (math/sin (+ (* 6.0 ang) (* 4.0 rad)))))))}])
+
+(defn- build-mesh!
+  "Fills mu/mv with the source pixel coordinate for every mesh vertex."
+  [{:keys [mu mv]} {:keys [w h]} preset prm t]
+  (let [half-h (/ h 2.0) cx 0.0 cy 0.0
+        vfn (:vertex preset)]
+    (dotimes [j (inc GY)]
+      (dotimes [i (inc GX)]
+        (let [px (* w (/ i (double GX))) py (* h (/ j (double GY)))
+              x  (/ (- px (/ w 2.0)) half-h)
+              y  (/ (- py half-h) half-h)
+              rad (math/sqrt (+ (* x x) (* y y)))
+              p  (if vfn (vfn prm rad (math/atan2 y x)) prm)
+              zoom (:zoom p 1.0) rot (:rot p 0.0) warp (:warp p 0.0)
+              ;; Pull from inside the frame (zoom > 1 moves outward), rotated.
+              ux (/ (- x cx) zoom) uy (/ (- y cy) zoom)
+              cr (math/cos rot) sr (math/sin rot)
+              sx (+ cx (- (* ux cr) (* uy sr)) (- (:dx p 0.0)))
+              sy (+ cy (+ (* ux sr) (* uy cr)) (- (:dy p 0.0)))
+              sx (+ sx (* warp 0.012 (math/sin (+ (* 1.3 t) (* 3.1 y) (* 1.7 x)))))
+              sy (+ sy (* warp 0.012 (math/cos (+ (* 1.1 t) (* 2.7 x) (* -1.9 y)))))
+              k  (+ i (* j (inc GX)))]
+          (aset mu k (+ (/ w 2.0) (* sx half-h)))
+          (aset mv k (+ half-h (* sy half-h))))))))
+
+(defn init [{:keys [w h]}]
+  {:tr (double-array (* w h)) :tg (double-array (* w h)) :tb (double-array (* w h))
+   :mu (double-array (* (inc GX) (inc GY))) :mv (double-array (* (inc GX) (inc GY)))
+   :preset nil})
+
+(defn draw [st {:keys [w h r g b] :as f} {:keys [t beats wave beat-env vol] :as a}]
+  (let [pi     (or (:preset st) (mod (quot beats 32) (count presets)))
+        preset (nth presets pi)
+        prm    ((:frame preset) a)
+        {:keys [tr tg tb]} st]
+    (build-mesh! st f preset prm t)
+    (warp! r g b tr tg tb (:mu st) (:mv st) w h GX GY (:decay prm 0.97))
+    (copy! tr r) (copy! tg g) (copy! tb b)
+    (polyline! f (wave-points (:wave prm) f wave (:amp prm 1.0) t)
+               (hue (:hue prm 0.0) (* 1.5 (:bright prm 0.6) (+ 0.6 (* 0.4 vol) (* 0.8 beat-env))))
+               (= :circle (:wave prm)))
+    (assoc st :preset-name (:name preset))))
+
+(def effect {:name "milk" :init init :draw draw})

@@ -34,6 +34,17 @@
         (aset g i (+ (aget g i) cg))
         (aset b i (+ (aget b i) cb))))))
 
+(defn blend!
+  "Alpha-blends toward a colour. Bounded by that colour, so it stays stable
+  under feedback where additive plotting would run away."
+  [{:keys [w h r g b]} x y cr cg cb alpha]
+  (let [x (int x) y (int y)]
+    (when (and (>= x 0) (< x w) (>= y 0) (< y h))
+      (let [i (+ x (* y w))]
+        (aset r i (+ (aget r i) (* alpha (- cr (aget r i)))))
+        (aset g i (+ (aget g i) (* alpha (- cg (aget g i)))))
+        (aset b i (+ (aget b i) (* alpha (- cb (aget b i)))))))))
+
 (defn c8
   "Soft-clips HDR values instead of hard-clamping, so stacked additive light
   saturates toward white rather than flattening."

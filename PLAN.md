@@ -40,7 +40,7 @@ Work top to bottom. Tick each box when it runs end to end on a real track.
       renderer, key loop, clean terminal restore on exit/crash
 - [x] **Geiss-style plasma flow** — smooth color fields pushed through a
       displacement map; bass drives flow speed
-- [ ] **MilkDrop-style feedback warp** — each frame zooms/rotates/fades the
+- [x] **MilkDrop-style feedback warp** — each frame zooms/rotates/fades the
       last one, a new waveform drawn on top; per-preset warp params
 - [ ] **AVS-style superscope** — presets are small lg fns from
       (i, n, wave sample, bands, t) → point; several built-in presets
@@ -81,3 +81,8 @@ Each loop iteration appends one line: date, what landed, what's next.
   16 beats; frame blend for flow. Headless dumps now seed clock/beats from
   track time. VM: ~8–10 fps live at scale 2 (draw ~30 ms, ansi ~58 ms).
   Next: MilkDrop feedback warp.
+- 2026-10-10 — milk landed: 32×18 warp mesh with per-frame and per-vertex
+  preset fns (zoom/rot/dx/dy/warp/decay), bilinear resample kernel, waves
+  (circle, line, pseudo-XY) alpha-blended so feedback can't run away. Four
+  presets: event horizon, lightspeed, desert wind, quantum foam; rotates every
+  32 beats. VM: ~10 fps at scale 2. Next: AVS superscope.

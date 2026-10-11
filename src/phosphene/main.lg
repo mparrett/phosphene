@@ -4,10 +4,11 @@
             [phosphene.listen :as listen]
             [phosphene.fb :as fb]
             [phosphene.fx.plasma :as plasma]
+            [phosphene.fx.milk :as milk]
             [phosphene.fx.scope :as scope]))
 
 (def ESC fb/ESC)
-(def effects [plasma/effect scope/effect])
+(def effects [plasma/effect milk/effect scope/effect])
 
 (defn- shq [s] (str "'" (string/replace s "'" "'\\''") "'"))
 (defn- now-ms [] (System/currentTimeMillis))
