@@ -23,11 +23,18 @@
       (let [m (aget mags k)] (recur (inc k) (+ acc (* m m))))
       (math/sqrt acc))))
 
-(defn make-state []
+(defn make-state
+  "t0 seeds the beat count, so effects keyed on it (palette rotation) match a
+  live run when a headless dump starts mid-track."
+  ([] (make-state nil 0.0))
+  ([track t0]
   (atom {:bass-avg 0.01 :mid-avg 0.01 :treb-avg 0.01
          :bass-att 1.0 :mid-att 1.0 :treb-att 1.0
          :bands (double-array NBANDS) :peaks (double-array NBANDS)
-         :beat-env 0.0 :beats 0}))
+         :beat-env 0.0
+         :beats (if track
+                  (count (filter pos? (take (int (* t0 audio/FPS-HOP)) (seq (:onset track)))))
+                  0)})))
 
 (defn- rel [x avg] (if (> avg 1e-6) (/ x avg) 0.0))
 

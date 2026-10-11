@@ -3,10 +3,11 @@
             [phosphene.audio :as audio]
             [phosphene.listen :as listen]
             [phosphene.fb :as fb]
+            [phosphene.fx.plasma :as plasma]
             [phosphene.fx.scope :as scope]))
 
 (def ESC fb/ESC)
-(def effects [scope/effect])
+(def effects [plasma/effect scope/effect])
 
 (defn- shq [s] (str "'" (string/replace s "'" "'\\''") "'"))
 (defn- now-ms [] (System/currentTimeMillis))
@@ -46,7 +47,7 @@
 (defn- simulate
   "Runs frames at a fixed 30 fps from t0 to t1 into fb; returns ms/frame."
   [track e f t0 t1]
-  (let [ls (listen/make-state) dt (/ 1.0 30)]
+  (let [ls (listen/make-state track t0) dt (/ 1.0 30)]
     (loop [t t0 st ((:init e) f) n 0 ms 0]
       (if (< t t1)
         (let [a0 (now-ms)

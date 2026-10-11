@@ -38,7 +38,7 @@ Work top to bottom. Tick each box when it runs end to end on a real track.
 
 - [x] Core: decode, analysis pass, playback sync, framebuffer + half-block
       renderer, key loop, clean terminal restore on exit/crash
-- [ ] **Geiss-style plasma flow** — smooth color fields pushed through a
+- [x] **Geiss-style plasma flow** — smooth color fields pushed through a
       displacement map; bass drives flow speed
 - [ ] **MilkDrop-style feedback warp** — each frame zooms/rotates/fades the
       last one, a new waveform drawn on top; per-preset warp params
@@ -76,3 +76,8 @@ Each loop iteration appends one line: date, what landed, what's next.
   `--scale`, afplay sync with pause via SIGSTOP, HUD, `--dump`/`--bench`, and
   a diagnostic `scope` effect. VM: ~12–16 fps live at 160×48 cells, scale 2.
   Next: Geiss plasma.
+- 2026-10-10 — plasma landed: LUT sum-of-sines kernel, domain-warped by
+  bass, cosine palettes with dark troughs (ribbons on black), rotating every
+  16 beats; frame blend for flow. Headless dumps now seed clock/beats from
+  track time. VM: ~8–10 fps live at scale 2 (draw ~30 ms, ansi ~58 ms).
+  Next: MilkDrop feedback warp.

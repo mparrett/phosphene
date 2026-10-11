@@ -1,0 +1,111 @@
+(ns phosphene.fx.plasma
+  "Geiss-style plasma flow: a sum-of-sines field, domain-warped by a second
+  sine field, mapped through a cycling 256-entry palette and blended over the
+  previous frame so the colour flows rather than flickers. Bass drives the
+  flow speed and the warp depth; beats kick the palette phase."
+  (:require [math] [phosphene.fb :as fb]))
+
+(def ^:private LUT-N 4096)
+(def ^:private LUT-K (/ LUT-N (* 2.0 math/PI)))
+
+(def ^:private lut
+  (let [a (double-array LUT-N)]
+    (dotimes [i LUT-N] (aset a i (math/sin (/ (* 2.0 math/PI i) LUT-N))))
+    a))
+
+;; Inline so the VM pays no call per lookup; the mask also wraps negative
+;; phases, since bit-and on a two's-complement int stays in range.
+(defmacro ^:private fsin [l ph]
+  `(aget ~l (bit-and (int (* ~ph LUT-K)) 4095)))
+
+(defn render!
+  "Kernel. colu/rowv are the scaled pixel coords, colw/roww the per-column and
+  per-row displacements; (cx, cy) the ring centre in the same units."
+  [^doubles r ^doubles g ^doubles b ^doubles l
+   ^doubles pr ^doubles pg ^doubles pb
+   ^doubles colu ^doubles rowv ^doubles colw ^doubles roww
+   w h ^double t ^double cx ^double cy ^double phase ^double keep]
+  (let [fresh (- 1.0 keep)]
+    (loop [y 0]
+      (if (< y h)
+        (let [v (aget rowv y) dv (aget roww y) row (* y w)]
+          (loop [x 0]
+            (if (< x w)
+              (let [u  (aget colu x)
+                    du (aget colw x)
+                    ex (- u cx) ey (- v cy)
+                    s  (+ (fsin l (+ u dv))
+                          (fsin l (+ v du))
+                          (fsin l (+ (* 0.5 (+ u v)) t))
+                          (* 0.6 (fsin l (- (* 0.35 (+ (* ex ex) (* ey ey))) (* 2.0 t)))))
+                    k  (bit-and (int (* 256.0 (+ phase (* 0.125 s)))) 255)
+                    i  (+ row x)]
+                (aset r i (+ (* keep (aget r i)) (* fresh (aget pr k))))
+                (aset g i (+ (* keep (aget g i)) (* fresh (aget pg k))))
+                (aset b i (+ (* keep (aget b i)) (* fresh (aget pb k))))
+                (recur (inc x)))
+              nil))
+          (recur (inc y)))
+        nil))))
+
+;; iq-style cosine palettes: colour(t) = a + b·cos(2π(c·t + d)) per channel.
+;; Each row is [a b c d] for r, g, b. Picked for the desert-rave brief:
+;; dusk magenta/teal, sodium-lamp amber, ultraviolet, acid chrome.
+(def palettes
+  [[[0.5 0.5 1.0 0.00] [0.5 0.5 1.0 0.33] [0.5 0.5 1.0 0.67]]
+   [[0.55 0.45 1.0 0.00] [0.35 0.35 1.0 0.10] [0.25 0.30 1.0 0.20]]
+   [[0.45 0.45 1.0 0.70] [0.15 0.20 1.0 0.90] [0.60 0.40 1.0 0.20]]
+   [[0.50 0.50 2.0 0.50] [0.50 0.50 1.0 0.20] [0.50 0.50 1.0 0.25]]
+   [[0.60 0.40 1.0 0.85] [0.20 0.30 2.0 0.40] [0.55 0.45 1.0 0.50]]])
+
+(defn- lerpv [a b k] (mapv (fn [x y] (mapv #(+ %1 (* k (- %2 %1))) x y)) a b))
+
+;; Two dark troughs per cycle turn the field into ribbons of light on black,
+;; which is the Geiss look; a bare cosine palette reads as a screensaver.
+(defn- env [t]
+  (+ 0.03 (* 1.1 (math/pow (+ 0.5 (* 0.5 (math/cos (* 4.0 math/PI t)))) 2.2))))
+
+(defn- fill-palette! [st pal]
+  (let [{:keys [pr pg pb]} st]
+    (dotimes [i 256]
+      (let [t (/ i 256.0)]
+        (doseq [[arr [a b c d]] [[pr (nth pal 0)] [pg (nth pal 1)] [pb (nth pal 2)]]]
+          (aset arr i (* (env t)
+                         (max 0.0 (+ a (* b (math/cos (* 2.0 math/PI (+ (* c t) d)))))))))))))
+
+(defn init [{:keys [w h]}]
+  {:pr (double-array 256) :pg (double-array 256) :pb (double-array 256)
+   :colu (double-array w) :rowv (double-array h)
+   :colw (double-array w) :roww (double-array h)
+   :clock nil :phase 0.0 :pal nil :pal-i 0})
+
+(defn draw [st {:keys [w h r g b]} {:keys [t dt bass-att mid-att treb-att beat beats beat-env]}]
+  (let [speed (+ 0.35 (* 0.9 (min 2.5 bass-att)))
+        ;; Seeded from track time so a headless dump looks like the live frame.
+        clock (+ (or (:clock st) t) (* dt speed))
+        ;; A new palette every 16 beats; the current one eases toward it.
+        pal-i (mod (quot beats 16) (count palettes))
+        pal   (lerpv (or (:pal st) (nth palettes pal-i)) (nth palettes pal-i) (min 1.0 (* 1.5 dt)))
+        phase (+ (if (:clock st) (:phase st) (* 0.05 t)) (* dt (+ 0.04 (* 0.05 treb-att))) (if beat 0.06 0.0))
+        scale (/ 9.0 h)                     ; ~9 radians top to bottom, any size
+        disp  (+ 0.6 (* 1.4 (min 2.0 bass-att)) (* 1.2 beat-env))
+        {:keys [colu rowv colw roww pr pg pb]} st]
+    (fill-palette! st pal)
+    (dotimes [x w]
+      (let [u (* scale (- x (* 0.5 w)))]
+        (aset colu x (+ u (* 0.4 (math/sin (* 0.31 clock)))))
+        (aset colw x (* disp (math/sin (+ (* 0.9 u) (* 0.7 clock)))))))
+    (dotimes [y h]
+      (let [v (* scale (- y (* 0.5 h)))]
+        (aset rowv y v)
+        (aset roww y (* disp (math/sin (- (* 1.1 v) (* 0.53 clock)))))))
+    (render! r g b lut pr pg pb colu rowv colw roww w h
+             clock
+             (* 2.5 (math/sin (* 0.23 clock)))
+             (* 1.6 (math/cos (* 0.17 clock)))
+             phase
+             ;; Keep more of the last frame when the music is quiet.
+             (max 0.35 (- 0.75 (* 0.12 mid-att))))
+    (assoc st :clock clock :phase phase :pal pal :pal-i pal-i)))
+
+(def effect {:name "plasma" :init init :draw draw})
