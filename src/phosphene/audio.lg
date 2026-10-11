@@ -9,15 +9,17 @@
 
 (defn- shq [s] (str "'" (string/replace s "'" "'\\''") "'"))
 
-(defn- cache-path [path]
-  (str (os/temp-dir) "/phosphene-" (hash path) "-" SR ".txt"))
+(defn- temp-path
+  "Unique per run: concurrent decodes of the same file must not share it."
+  [path]
+  (str (os/temp-dir) "/phosphene-" (hash path) "-" (System/nanoTime) ".txt"))
 
 (defn decode
   "Decodes any ffmpeg-readable file to a mono double-array at SR."
   [path]
   (when-not (file-exists? path)
     (throw (ex-info (str "no such file: " path) {})))
-  (let [out (cache-path path)
+  (let [out (temp-path path)
         cmd (str "ffmpeg -nostdin -v error -i " (shq path)
                  " -ac 1 -ar " SR " -f s16le - | perl -0777 -ne 'print join(\"\\n\",unpack(\"s<*\",$_))' > " (shq out))
         res (os/sh "sh" "-c" cmd)]
