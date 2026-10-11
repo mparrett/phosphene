@@ -14,6 +14,7 @@
 (defn- usage []
   (println "usage: phosphene <audio-file> [--fx NAME [--preset N]] [--fps N] [--scale N] [--mute] [--no-post]")
   (println "       phosphene <audio-file> --dump SECONDS OUT.ppm [--size WxH] [--warm S] [--fx NAME]")
+  (println "       phosphene <audio-file> --frames START SECONDS OUT-DIR [--size WxH] [--warm S]")
   (println "       phosphene <audio-file> --bench FRAMES [--size WxH] [--fx NAME]")
   (println "Without --fx, scenes change automatically every 32 beats (toggle with a).")
   (os/exit 2))
@@ -32,6 +33,9 @@
         "--size"   (recur (rest more) (assoc opts :size (mapv parse-int (string/split (first more) "x"))))
         "--dump"   (recur (drop 2 more) (assoc opts :dump [(parse-double (first more)) (second more)]))
         "--bench"  (recur (rest more) (assoc opts :bench (parse-int (first more))))
+        "--frames" (recur (drop 3 more) (assoc opts :frames [(parse-double (first more))
+                                                            (parse-double (second more))
+                                                            (nth more 2)]))
         (recur more (assoc opts :file a)))
       opts)))
 
@@ -61,7 +65,20 @@
           (recur (+ t dt) d2 (inc n) (+ ms (- (now-ms) a0))))
         [d (/ (double ms) (max 1 n))]))))
 
-(defn- headless [{:keys [file dump bench size scale warm] :as opts}]
+(defn- write-frames
+  "Writes every frame from t0 for secs, at 30 fps, as OUT-DIR/NNNNN.ppm —
+  one continuous run, so feedback trails carry across frames."
+  [track d t0 secs dir]
+  (mkdir dir)
+  (let [ls (listen/make-state track t0) dt (/ 1.0 30) n (int (* secs 30))]
+    (loop [k 0 d d]
+      (when (< k n)
+        (let [d (dir/step d (listen/frame ls track (+ t0 (* k dt)) dt))]
+          (spit (format "%s/%05d.ppm" dir k) (fb/ppm (:shown d)))
+          (recur (inc k) d))))
+    (println "wrote" n "frames to" dir)))
+
+(defn- headless [{:keys [file dump bench frames size scale warm] :as opts}]
   (let [[cols rows] (or size [160 48])
         track (audio/load file)
         shape (screen-fb cols rows (or scale 1))]
@@ -72,6 +89,11 @@
             [d _] (simulate track (director shape opts) (max 0.0 (- t (or warm 3.0))) t)]
         (spit out (fb/ppm (:shown d)))
         (println "wrote" out "—" (dir/label d))))
+    (when frames
+      (let [[t0 secs out] frames
+            w0 (max 0.0 (- t0 (or warm 3.0)))
+            [d _] (simulate track (director shape opts) w0 t0)]
+        (write-frames track d t0 secs out)))
     (when bench
       (let [t0 (min 30.0 (* 0.3 (:duration track)))
             [d ms] (simulate track (director shape opts) t0 (+ t0 (/ bench 30.0)))
@@ -167,7 +189,7 @@
 (defn -main [& args]
   (let [opts (parse-args args)]
     (when-not (:file opts) (usage))
-    (if (or (:dump opts) (:bench opts))
+    (if (or (:dump opts) (:bench opts) (:frames opts))
       (headless opts)
       (live opts))))
 
