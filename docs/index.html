@@ -1,8 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>phosphene dev log</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tektur:wght@500;700&family=Familjen+Grotesk:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="preload" href="fonts/tektur.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/familjen-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/jetbrains-mono.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+/* Fonts are self-hosted (latin subsets, OFL; licences in fonts/) and preloaded:
+   from Google Fonts with display=swap, the heading drew in a fallback first and
+   visibly jumped when Tektur arrived. block hides text for the few ms it takes
+   a preloaded, same-origin file to land instead of swapping it under the reader. */
+@font-face { font-family: "Tektur"; src: url(fonts/tektur.woff2) format("woff2"); font-weight: 400 900; font-display: block; }
+@font-face { font-family: "Familjen Grotesk"; src: url(fonts/familjen-grotesk.woff2) format("woff2"); font-weight: 400 700; font-display: block; }
+@font-face { font-family: "Familjen Grotesk"; src: url(fonts/familjen-grotesk-italic.woff2) format("woff2"); font-weight: 400 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url(fonts/jetbrains-mono.woff2) format("woff2"); font-weight: 100 800; font-display: block; }
 /* Layout: a single reading column; video plates break wider like a gallery wall.
    Single-theme by choice: the page is the dark room the visualizer plays in. */
 :root {
@@ -81,6 +94,8 @@ td.n { font-family: var(--mono); white-space: nowrap; color: var(--phosphor); }
 @media (prefers-reduced-motion: reduce) { video { animation: none; } }
 @media (max-width: 520px) { .log li { grid-template-columns: 1fr; gap: 4px; } body { font-size: 17px; } }
 </style>
+</head>
+<body>
 
 <div class="wrap">
   <header class="col">
@@ -260,3 +275,5 @@ ESC[48;2;<span class="s">59;42;122</span>m    <span class="c">; bg  deep violet<
     document.querySelectorAll('video').forEach(v => { v.removeAttribute('autoplay'); v.pause(); v.controls = true; });
   }
 </script>
+</body>
+</html>
