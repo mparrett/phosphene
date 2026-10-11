@@ -3,7 +3,9 @@
 A full-screen terminal music visualizer written in [let-go](https://github.com/nooga/let-go).
 Winamp-plugin lineage: Geiss plasma, MilkDrop feedback warp, AVS superscopes.
 
-    bin/phosphene track.mp3               # live; ←/→ effect, space pause, q quit
+    bin/phosphene track.mp3               # live; scenes change every 32 beats
+                                          # ←/→ scene, a auto on/off, space pause, q quit
+    bin/phosphene track.mp3 --fx milk --preset 2   # pin one scene
     bin/phosphene track.mp3 --scale 1     # full half-block resolution (slower on the VM)
     bin/phosphene track.mp3 --dump 12.5 frame.ppm --size 160x48
     bin/phosphene track.mp3 --bench 60

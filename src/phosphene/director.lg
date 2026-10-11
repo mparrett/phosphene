@@ -1,0 +1,108 @@
+(ns phosphene.director
+  "Scenes (an effect with a pinned preset), switching between them, and
+  crossfades. A new scene starts from a copy of the frame on screen, so the
+  feedback engines morph out of the old picture the way MilkDrop's preset
+  transitions do, while the crossfade hides the first frames of the switch."
+  (:require [math] [phosphene.fb :as fb]
+            [phosphene.fx.plasma :as plasma]
+            [phosphene.fx.milk :as milk]
+            [phosphene.fx.superscope :as superscope]
+            [phosphene.fx.scope :as scope]))
+
+(def FADE-S 1.5)
+(def PHRASE-BEATS 32)
+(def PHRASE-S 30.0)        ; for tracks too quiet or beatless to find onsets
+
+(defn- scenes-of [e presets]
+  (if presets
+    (vec (map-indexed (fn [i p] {:fx e :preset i :label (str (:name e) " · " (:name p))}) presets))
+    [{:fx e :preset nil :label (:name e)}]))
+
+(def scenes
+  (vec (concat (scenes-of plasma/effect nil)
+               (scenes-of milk/effect milk/presets)
+               (scenes-of superscope/effect superscope/presets)
+               (scenes-of scope/effect nil))))
+
+;; Auto mode interleaves engines so consecutive scenes look different, and
+;; leaves out the diagnostic scope.
+(def auto-order
+  (let [by (fn [n] (keep-indexed (fn [i s] (when (= n (:name (:fx s))) i)) scenes))
+        cols [(cycle (by "plasma")) (by "milk") (by "superscope")]
+        n (max (count (by "milk")) (count (by "superscope")))]
+    (vec (distinct (mapcat (fn [k] (keep #(nth % k nil) cols)) (range n))))))
+
+(defn scene-index [fx-name preset]
+  (or (first (keep-indexed (fn [i s] (when (and (= fx-name (:name (:fx s)))
+                                                (or (nil? preset) (= preset (:preset s))))
+                                       i))
+                           scenes))
+      0))
+
+(defn mix!
+  "Kernel: out = a + k·(b − a), per channel."
+  [^doubles ar ^doubles ag ^doubles ab ^doubles br ^doubles bg ^doubles bb
+   ^doubles orr ^doubles og ^doubles ob ^double k]
+  (let [n (alength ar)]
+    (loop [i 0]
+      (if (< i n)
+        (do (aset orr i (+ (aget ar i) (* k (- (aget br i) (aget ar i)))))
+            (aset og i (+ (aget ag i) (* k (- (aget bg i) (aget ag i)))))
+            (aset ob i (+ (aget ab i) (* k (- (aget bb i) (aget ab i)))))
+            (recur (inc i)))
+        nil))))
+
+(defn- blank-like [f] (merge f (fb/make (:w f) (:h f))))
+
+(defn- start-scene [i shape seed]
+  (let [s  (nth scenes i)
+        f  (blank-like shape)
+        st (cond-> ((:init (:fx s)) f) (:preset s) (assoc :preset (:preset s)))]
+    (when seed
+      (milk/copy! (:r seed) (:r f)) (milk/copy! (:g seed) (:g f)) (milk/copy! (:b seed) (:b f)))
+    {:i i :st st :f f}))
+
+(defn make
+  "shape: a framebuffer whose dims (and :cols/:rows) every scene copies."
+  [shape i auto?]
+  {:cur (start-scene i shape nil) :out nil :fade 1.0
+   :disp (blank-like shape) :shown nil
+   :auto auto? :next-beats nil :next-t nil})
+
+(defn switch [d i]
+  (let [seed (or (:shown d) (:f (:cur d)))]
+    (assoc d :out (:cur d) :fade 0.0
+           :cur (start-scene (mod i (count scenes)) (:disp d) seed)
+           :next-beats nil :next-t nil)))
+
+(defn step-scene [d delta]
+  (switch d (+ (:i (:cur d)) delta)))
+
+(defn next-auto [d]
+  (let [i   (:i (:cur d))
+        pos (or (first (keep-indexed (fn [k j] (when (= j i) k)) auto-order)) -1)]
+    (switch d (nth auto-order (mod (inc pos) (count auto-order))))))
+
+(defn label [d] (:label (nth scenes (:i (:cur d)))))
+
+(defn- run [{:keys [i st f] :as sc} a]
+  (assoc sc :st ((:draw (:fx (nth scenes i))) st f a)))
+
+(defn step
+  "Advances one frame; returns the director with :shown set to the frame
+  to display."
+  [d {:keys [t dt beats] :as a}]
+  (let [d (if (and (:auto d) (:next-beats d)
+                   (or (>= beats (:next-beats d)) (>= t (:next-t d))))
+            (next-auto d) d)
+        d (cond-> d (nil? (:next-beats d))
+                  (assoc :next-beats (+ beats PHRASE-BEATS) :next-t (+ t PHRASE-S)))
+        cur (run (:cur d) a)]
+    (if (:out d)
+      (let [out  (run (:out d) a)
+            fade (min 1.0 (+ (:fade d) (/ dt FADE-S)))
+            k    (* fade fade (- 3.0 (* 2.0 fade)))   ; smoothstep
+            {of :f} out {cf :f} cur disp (:disp d)]
+        (mix! (:r of) (:g of) (:b of) (:r cf) (:g cf) (:b cf) (:r disp) (:g disp) (:b disp) k)
+        (assoc d :cur cur :out (when (< fade 1.0) out) :fade fade :shown disp))
+      (assoc d :cur cur :shown (:f cur)))))

@@ -44,7 +44,7 @@ Work top to bottom. Tick each box when it runs end to end on a real track.
       last one, a new waveform drawn on top; per-preset warp params
 - [x] **AVS-style superscope** — presets are small lg fns from
       (i, n, wave sample, bands, t) → point; several built-in presets
-- [ ] Preset switching and crossfades between the three engines
+- [x] Preset switching and crossfades between the three engines
 - [ ] Post FX that serve 1–3: bloom-ish glow, palette cycling
 - [ ] Stretch: **live preset editor** — a legmacs-style mini editor pane where
       you edit the actual lg of a superscope/warp preset and it hot-reloads
@@ -92,3 +92,7 @@ Each loop iteration appends one line: date, what landed, what's next.
   Five presets: double helix, torus knot, rose bloom, orb, aurora. `--preset
   N` pins one. eval/load-string work on the VM, so the stretch editor is
   feasible. VM: ~19–21 fps live at scale 2. Next: preset switching + fades.
+- 2026-10-10 — director landed: every effect×preset is a scene; auto mode
+  interleaves engines and switches every 32 beats (30 s fallback); a new scene
+  is seeded with the frame on screen and crossfaded over 1.5 s, so feedback
+  effects morph out of the old picture. Keys ←/→, a. Next: post FX.
