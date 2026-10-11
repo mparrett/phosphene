@@ -3,6 +3,10 @@
 A full-screen terminal music visualizer written in [let-go](https://github.com/nooga/let-go).
 Winamp-plugin lineage: Geiss plasma, MilkDrop feedback warp, AVS superscopes.
 
+![phosphene: a plasma scene handing off to MilkDrop feedback, then three superscope and warp presets](docs/tour.gif)
+
+Rendered headless from the repo at 192×54 cells. The [dev log](docs/index.html) walks through how each engine works.
+
     bin/phosphene track.mp3               # live; scenes change every 32 beats
                                           # ←/→ scene, a auto, b bloom, c colour cycle,
                                           # space pause, q quit
