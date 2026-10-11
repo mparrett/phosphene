@@ -1,0 +1,92 @@
+(ns phosphene.fb
+  "Float RGB framebuffer, drawn to the terminal as half-block cells: the top
+  pixel is the cell's foreground (▀), the bottom pixel its background.
+  Functions taking ^doubles are kernels: keep them AOT-lowerable (see PLAN.md)."
+  (:require [math] [string]))
+
+(def ESC (str (char 27)))
+
+(defn make [w h]
+  {:w w :h h
+   :r (double-array (* w h)) :g (double-array (* w h)) :b (double-array (* w h))})
+
+(defn fade!
+  "Multiplies every channel by k; k = 0 clears."
+  [^doubles r ^doubles g ^doubles b ^double k]
+  (let [n (alength r)]
+    (loop [i 0]
+      (if (< i n)
+        (do (aset r i (* k (aget r i)))
+            (aset g i (* k (aget g i)))
+            (aset b i (* k (aget b i)))
+            (recur (inc i)))
+        nil))))
+
+(defn clear! [{:keys [r g b]}] (fade! r g b 0.0))
+
+(defn plot!
+  "Additive plot; out-of-bounds coordinates are ignored."
+  [{:keys [w h r g b]} x y cr cg cb]
+  (let [x (int x) y (int y)]
+    (when (and (>= x 0) (< x w) (>= y 0) (< y h))
+      (let [i (+ x (* y w))]
+        (aset r i (+ (aget r i) cr))
+        (aset g i (+ (aget g i) cg))
+        (aset b i (+ (aget b i) cb))))))
+
+(defn c8
+  "Soft-clips HDR values instead of hard-clamping, so stacked additive light
+  saturates toward white rather than flattening."
+  [^double v]
+  (if (<= v 0.0) 0
+      (if (> v 0.8)
+        (int (* 255.0 (- 1.0 (* 0.2 (math/exp (* -5.0 (- v 0.8)))))))
+        (int (* 255.0 v)))))
+
+(def ^:private N8 (mapv str (range 256)))
+
+(defn ansi
+  "The whole frame as one string for a cols×rows cell area starting at
+  terminal row `top`. The framebuffer may be smaller than the cell grid
+  (rendered at a coarser scale); cells sample it nearest-neighbour.
+  Wrapped in synchronized-update markers (mode 2026) to avoid tearing."
+  [{:keys [w h r g b]} cols rows top]
+  (let [sb (StringBuilder.)
+        sx (/ (double w) cols)
+        sy (/ (double h) (* 2 rows))
+        app (fn [s] (.append sb s))]
+    (app (str ESC "[?2026h"))
+    (loop [row 0]
+      (if (< row rows)
+        (let [y0 (* w (int (* sy (* 2 row))))
+              y1 (* w (min (dec h) (int (* sy (inc (* 2 row))))))]
+          (app (str ESC "[" (+ top row) ";1H"))
+          (loop [x 0 lf -1 lb -1]
+            (if (< x cols)
+              (let [px (int (* sx x))
+                    i0 (+ px y0) i1 (+ px y1)
+                    fr (c8 (aget r i0)) fg (c8 (aget g i0)) fb (c8 (aget b i0))
+                    br (c8 (aget r i1)) bg (c8 (aget g i1)) bb (c8 (aget b i1))
+                    fp (+ (* 65536 fr) (* 256 fg) fb)
+                    bp (+ (* 65536 br) (* 256 bg) bb)]
+                (if (not= fp lf)
+                  (.append sb (str "\u001b[38;2;" (nth N8 fr) ";" (nth N8 fg) ";" (nth N8 fb) "m"))
+                  nil)
+                (if (not= bp lb)
+                  (.append sb (str "\u001b[48;2;" (nth N8 br) ";" (nth N8 bg) ";" (nth N8 bb) "m▀"))
+                  (.append sb "▀"))
+                (recur (inc x) fp bp))
+              nil))
+          (recur (inc row)))
+        nil))
+    (app (str ESC "[0m" ESC "[?2026l"))
+    (.toString sb)))
+
+(defn ppm
+  "Plain-text PPM (P3); text so it survives lg's string-based file IO."
+  [{:keys [w h r g b]}]
+  (let [sb (StringBuilder.)]
+    (.append sb (str "P3\n" w " " h "\n255\n"))
+    (dotimes [i (* w h)]
+      (.append sb (str (c8 (aget r i)) " " (c8 (aget g i)) " " (c8 (aget b i)) "\n")))
+    (.toString sb)))

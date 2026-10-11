@@ -1,0 +1,168 @@
+(ns phosphene.main
+  (:require [string] [math] [os] [term]
+            [phosphene.audio :as audio]
+            [phosphene.listen :as listen]
+            [phosphene.fb :as fb]
+            [phosphene.fx.scope :as scope]))
+
+(def ESC fb/ESC)
+(def effects [scope/effect])
+
+(defn- shq [s] (str "'" (string/replace s "'" "'\\''") "'"))
+(defn- now-ms [] (System/currentTimeMillis))
+(defn- basename [p] (last (string/split p "/")))
+
+(defn- usage []
+  (println "usage: phosphene <audio-file> [--fx NAME] [--fps N] [--scale N] [--mute]")
+  (println "       phosphene <audio-file> --dump SECONDS OUT.ppm [--size WxH] [--fx NAME]")
+  (println "       phosphene <audio-file> --bench FRAMES [--size WxH] [--fx NAME]")
+  (os/exit 2))
+
+(defn- parse-args [args]
+  (loop [xs args opts {}]
+    (if-let [[a & more] (seq xs)]
+      (case a
+        "--fx"    (recur (rest more) (assoc opts :fx (first more)))
+        "--scale" (recur (rest more) (assoc opts :scale (parse-int (first more))))
+        "--mute"  (recur more (assoc opts :mute true))
+        "--fps"   (recur (rest more) (assoc opts :fps (parse-int (first more))))
+        "--size"  (recur (rest more) (assoc opts :size (mapv parse-int (string/split (first more) "x"))))
+        "--dump"  (recur (drop 2 more) (assoc opts :dump [(parse-double (first more)) (second more)]))
+        "--bench" (recur (rest more) (assoc opts :bench (parse-int (first more))))
+        (recur more (assoc opts :file a)))
+      opts)))
+
+(defn- screen-fb
+  "A framebuffer for a cols×rows cell area at 1/scale resolution."
+  [cols rows scale]
+  (assoc (fb/make (max 8 (quot cols scale)) (max 8 (quot (* 2 rows) scale)))
+         :cols cols :rows rows))
+
+(defn- fx-index [name]
+  (or (first (keep-indexed (fn [i e] (when (= name (:name e)) i)) effects)) 0))
+
+;; ── Headless ─────────────────────────────────────────────────────────────
+
+(defn- simulate
+  "Runs frames at a fixed 30 fps from t0 to t1 into fb; returns ms/frame."
+  [track e f t0 t1]
+  (let [ls (listen/make-state) dt (/ 1.0 30)]
+    (loop [t t0 st ((:init e) f) n 0 ms 0]
+      (if (< t t1)
+        (let [a0 (now-ms)
+              a  (listen/frame ls track t dt)
+              st ((:draw e) st f a)]
+          (recur (+ t dt) st (inc n) (+ ms (- (now-ms) a0))))
+        (/ (double ms) (max 1 n))))))
+
+(defn- headless [{:keys [file dump bench size fx scale]}]
+  (let [[cols rows] (or size [160 48])
+        track (audio/load file)
+        e     (nth effects (fx-index fx))
+        f     (screen-fb cols rows (or scale 1))]
+    (println (str "loaded " (basename file) ": " (format "%.1f" (:duration track)) " s, "
+                  (count (filter pos? (seq (:onset track)))) " onsets"))
+    (when dump
+      (let [[t out] dump]
+        (simulate track e f (max 0.0 (- t 3.0)) t)
+        (spit out (fb/ppm f))
+        (println "wrote" out)))
+    (when bench
+      (let [t0 (min 30.0 (* 0.3 (:duration track)))
+            ms (simulate track e f t0 (+ t0 (/ bench 30.0)))
+            a0 (now-ms)
+            _  (dotimes [_ 10] (fb/ansi f cols rows 1))
+            ams (/ (- (now-ms) a0) 10.0)]
+        (println (format "%s %dx%d cells, %dx%d px: draw+listen %.1f ms/frame, ansi %.1f ms/frame"
+                         (:name e) cols rows (:w f) (:h f) ms ams))))))
+
+;; ── Live ─────────────────────────────────────────────────────────────────
+
+(defn- start-player [file]
+  (string/trim (:out (os/sh "sh" "-c" (str "afplay " (shq file) " >/dev/null 2>&1 & echo $!")))))
+
+(defn- signal [pid sig] (when pid (os/sh "kill" (str "-" sig) pid)))
+
+(defn- hud [cols row {:keys [name t dur fps a paused]}]
+  (let [mm (fn [s] (format "%d:%02d" (int (quot s 60)) (int (mod s 60))))
+        meter (fn [v] (let [n (max 0 (min 8 (int (* 4 v))))]
+                        (str (apply str (repeat n "▮")) (apply str (repeat (- 8 n) "·")))))
+        beat (if (> (:beat-env a) 0.5) (str ESC "[38;2;255;80;200m●") (str ESC "[38;2;70;60;90m○"))
+        left (str " ◆ phosphene  " name "  " (mm t) "/" (mm dur) (if paused "  ⏸" ""))
+        right (str "bass " (meter (:bass-att a)) " mid " (meter (:mid-att a))
+                   " treb " (meter (:treb-att a)) "  " (format "%2d fps " (int fps)))
+        pad (max 1 (- cols (count left) (count right) 2))]
+    (str ESC "[" row ";1H" ESC "[48;2;12;8;20m" ESC "[38;2;150;140;190m"
+         left (apply str (repeat pad " ")) beat " " ESC "[38;2;150;140;190m" right
+         ESC "[K" ESC "[0m")))
+
+(defn- live [{:keys [file fx fps scale mute]}]
+  (let [size (term/size)]
+    (when-not size (println "not a terminal; try --dump or --bench") (os/exit 1))
+    (term/write "decoding…") (term/flush)
+    (let [track  (audio/load file)
+          [cols rows] size
+          target (/ 1000.0 (or fps 30))
+          name   (basename file)]
+      (term/raw-mode!)
+      (term/alternate-screen)
+      (term/hide-cursor)
+      (term/clear)
+      (let [pid (when-not mute (start-player file))]
+        (try
+          (loop [fi (fx-index fx)
+                 f (screen-fb cols (dec rows) (or scale 2))
+                 st ((:init (nth effects fi)) f)
+                 ls (listen/make-state)
+                 t0 (now-ms) paused-at nil
+                 last (now-ms) fps-avg 30.0]
+            (let [frame-start (now-ms)
+                  t  (/ (- (or paused-at frame-start) t0) 1000.0)
+                  dt (max 0.001 (/ (- frame-start last) 1000.0))
+                  e  (nth effects fi)
+                  a  (listen/frame ls track t (if paused-at 0.001 dt))
+                  st (if paused-at st ((:draw e) st f a))
+                  [c r] (or (term/size) [cols rows])]
+              (term/write (fb/ansi f (:cols f) (:rows f) 1))
+              (term/write (hud c r {:name (:name e) :t t :dur (:duration track)
+                                    :fps fps-avg :a a :paused paused-at}))
+              (term/flush)
+              (let [k (when (term/key-pending?) (term/read-key))
+                    resized (or (not= c (:cols f)) (not= (dec r) (:rows f)))]
+                (cond
+                  (or (= k "q") (= k (str (char 3))) (= k ESC)
+                      (> t (+ 0.5 (:duration track)))) nil
+                  resized
+                  (let [f (screen-fb c (dec r) (or scale 2))]
+                    (term/clear)
+                    (recur fi f ((:init e) f) ls t0 paused-at frame-start fps-avg))
+                  (or (= k (str ESC "[C")) (= k (str ESC "[D")))
+                  (let [fi (mod (+ fi (if (= k (str ESC "[C")) 1 -1)) (count effects))]
+                    (recur fi f ((:init (nth effects fi)) f) ls t0 paused-at frame-start fps-avg))
+                  (= k " ")
+                  (if paused-at
+                    (do (signal pid "CONT")
+                        (recur fi f st ls (+ t0 (- (now-ms) paused-at)) nil frame-start fps-avg))
+                    (do (signal pid "STOP")
+                        (recur fi f st ls t0 (now-ms) frame-start fps-avg)))
+                  :else
+                  (let [spent (- (now-ms) frame-start)]
+                    (when (< spent target) (sleep (int (- target spent))))
+                    (recur fi f st ls t0 paused-at frame-start
+                           (+ (* 0.9 fps-avg) (* 0.1 (/ 1000.0 (max 1 (- (now-ms) frame-start)))))))))))
+          (finally
+            (signal pid "CONT")
+            (signal pid "TERM")
+            (term/show-cursor)
+            (term/main-screen)
+            (term/reset-style)
+            (term/restore-mode!)))))))
+
+(defn -main [& args]
+  (let [opts (parse-args args)]
+    (when-not (:file opts) (usage))
+    (if (or (:dump opts) (:bench opts))
+      (headless opts)
+      (live opts))))
+
+(apply -main *command-line-args*)

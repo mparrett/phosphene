@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs phosphene from source on the let-go VM.
+here="$(cd "$(dirname "$0")/.." && pwd)"
+exec lg -source-paths "$here/src" "$here/src/phosphene/main.lg" "$@"

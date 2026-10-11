@@ -1,0 +1,87 @@
+(ns phosphene.listen
+  "Per-frame audio features, shaped like MilkDrop's: bass/mid/treb hover
+  around 1.0 relative to their own recent average, with *-att smoothed
+  versions for slower motion."
+  (:require [math] [phosphene.fft :as fft] [phosphene.audio :as audio]))
+
+(def NBANDS 32)
+(def WAVE 512)
+
+(def ^:private bin-hz (/ (double audio/SR) fft/N))
+
+(defn- bin [hz] (max 1 (min (dec (quot fft/N 2)) (int (/ hz bin-hz)))))
+
+;; Log-spaced band edges from 40 Hz to Nyquist.
+(def ^:private edges
+  (let [lo (math/log 40.0) hi (math/log (/ audio/SR 2.0))]
+    (vec (for [i (range (inc NBANDS))]
+           (bin (math/exp (+ lo (* (- hi lo) (/ (double i) NBANDS)))))))))
+
+(defn- energy [mags b0 b1]
+  (loop [k b0 acc 0.0]
+    (if (< k (max (inc b0) b1))
+      (let [m (aget mags k)] (recur (inc k) (+ acc (* m m))))
+      (math/sqrt acc))))
+
+(defn make-state []
+  (atom {:bass-avg 0.01 :mid-avg 0.01 :treb-avg 0.01
+         :bass-att 1.0 :mid-att 1.0 :treb-att 1.0
+         :bands (double-array NBANDS) :peaks (double-array NBANDS)
+         :beat-env 0.0 :beats 0}))
+
+(defn- rel [x avg] (if (> avg 1e-6) (/ x avg) 0.0))
+
+(defn frame
+  "Features at time t (s). dt is the time since the previous call, used for
+  smoothing that stays frame-rate independent."
+  [st track t dt]
+  (let [s       @st
+        samples (:samples track)
+        n       (:n track)
+        end     (min n (int (* t audio/SR)))
+        mags    (fft/magnitudes samples end)
+        bass    (energy mags (bin 20) (bin 250))
+        mid     (energy mags (bin 250) (bin 2000))
+        treb    (energy mags (bin 2000) (bin 11000))
+        ;; ~4 s memory for the averages, ~0.25 s for the att values
+        ka      (- 1.0 (math/exp (/ (- dt) 4.0)))
+        kt      (- 1.0 (math/exp (/ (- dt) 0.25)))
+        bavg    (+ (:bass-avg s) (* ka (- bass (:bass-avg s))))
+        mavg    (+ (:mid-avg s) (* ka (- mid (:mid-avg s))))
+        tavg    (+ (:treb-avg s) (* ka (- treb (:treb-avg s))))
+        b (rel bass bavg) m (rel mid mavg) tr (rel treb tavg)
+        bands (:bands s) peaks (:peaks s)
+        kb (- 1.0 (math/exp (/ (- dt) 0.08)))
+        kp (math/exp (/ (- dt) 0.6))
+        wave (double-array WAVE)
+        f    (int (* t audio/FPS-HOP))
+        ;; Any pre-detected onset since the last frame counts as a beat.
+        f0   (max 0 (int (* (- t dt) audio/FPS-HOP)))
+        beat? (loop [i (inc f0)]
+                (cond (> i (min f (dec (:frames track)))) false
+                      (pos? (aget (:onset track) i)) true
+                      :else (recur (inc i))))]
+    (dotimes [i NBANDS]
+      (let [e (energy mags (nth edges i) (nth edges (inc i)))
+            v (min 1.0 (* 0.55 (math/log (+ 1.0 (* 12.0 e)))))
+            old (aget bands i)
+            v (if (> v old) v (+ old (* kb (- v old))))]
+        (aset bands i v)
+        (aset peaks i (max v (* kp (aget peaks i))))))
+    (let [w0 (- end WAVE)]
+      (dotimes [i WAVE]
+        (let [j (+ w0 i)] (aset wave i (if (and (>= j 0) (< j n)) (aget samples j) 0.0)))))
+    (let [batt (+ (:bass-att s) (* kt (- b (:bass-att s))))
+          matt (+ (:mid-att s) (* kt (- m (:mid-att s))))
+          tatt (+ (:treb-att s) (* kt (- tr (:treb-att s))))
+          benv (if beat? 1.0 (* (:beat-env s) (math/exp (/ (- dt) 0.18))))
+          beats (if beat? (inc (:beats s)) (:beats s))]
+      (swap! st assoc :bass-avg bavg :mid-avg mavg :treb-avg tavg
+             :bass-att batt :mid-att matt :treb-att tatt :beat-env benv :beats beats)
+      {:t t :dt dt
+       :bass b :mid m :treb tr :bass-att batt :mid-att matt :treb-att tatt
+       :vol (/ (+ b m tr) 3.0)
+       :rms (if (< f (:frames track)) (aget (:rms track) f) 0.0)
+       :beat beat? :beat-env benv :beats beats
+       :next-beat (audio/next-beat track t)
+       :bands bands :peaks peaks :wave wave :spectrum mags})))

@@ -1,0 +1,84 @@
+(ns phosphene.audio
+  (:require [string] [math] [os]))
+
+;; Decoding goes through text because lg reads files as strings: raw PCM bytes
+;; above 0x7f come back as U+FFFD, so ffmpeg's s16le goes through perl's unpack
+;; (~3x faster than od here) and is parsed as decimal lines.
+
+(def SR 22050)
+
+(defn- shq [s] (str "'" (string/replace s "'" "'\\''") "'"))
+
+(defn- cache-path [path]
+  (str (os/temp-dir) "/phosphene-" (hash path) "-" SR ".txt"))
+
+(defn decode
+  "Decodes any ffmpeg-readable file to a mono double-array at SR."
+  [path]
+  (when-not (file-exists? path)
+    (throw (ex-info (str "no such file: " path) {})))
+  (let [out (cache-path path)
+        cmd (str "ffmpeg -nostdin -v error -i " (shq path)
+                 " -ac 1 -ar " SR " -f s16le - | perl -0777 -ne 'print join(\"\\n\",unpack(\"s<*\",$_))' > " (shq out))
+        res (os/sh "sh" "-c" cmd)]
+    (when-not (zero? (:exit res))
+      (throw (ex-info (str "ffmpeg failed: " (:err res)) {})))
+    (let [lines (remove string/blank? (string/split (slurp out) "\n"))
+          a     (double-array (count lines))]
+      (delete-file out)
+      (loop [i 0 xs (seq lines)]
+        (when xs
+          (aset a i (/ (double (parse-int (first xs))) 32768.0))
+          (recur (inc i) (next xs))))
+      a)))
+
+;; ── Pre-pass ─────────────────────────────────────────────────────────────
+;; A full-track FFT is too slow on the VM (~6 ms per 1024 points), so the
+;; pre-pass uses one-pole filters for bass energy and loudness per hop, which
+;; is enough to find onsets ahead of time.
+
+(def FPS-HOP 60)
+
+(defn analyze [samples]
+  (let [n     (alength samples)
+        hop   (quot SR FPS-HOP)
+        nf    (inc (quot n hop))
+        rms   (double-array nf)
+        bass  (double-array nf)
+        onset (double-array nf)
+        k     (- 1.0 (math/exp (/ (* -2.0 math/PI 150.0) SR)))]
+    (loop [f 0 lp 0.0]
+      (when (< f nf)
+        (let [s0 (* f hop) s1 (min n (+ s0 hop))
+              [lp sa sb]
+              (loop [i s0 lp lp sa 0.0 sb 0.0]
+                (if (< i s1)
+                  (let [x (aget samples i) lp (+ lp (* k (- x lp)))]
+                    (recur (inc i) lp (+ sa (* x x)) (+ sb (* lp lp))))
+                  [lp sa sb]))
+              m (double (max 1 (- s1 s0)))]
+          (aset rms f (math/sqrt (/ sa m)))
+          (aset bass f (math/sqrt (/ sb m)))
+          (recur (inc f) lp))))
+    ;; Onset: bass rises above 1.35× its trailing ~0.5 s mean, with a
+    ;; refractory gap so one kick doesn't fire on consecutive hops.
+    (loop [f 1 avg 0.0 last -100]
+      (when (< f nf)
+        (let [b    (aget bass f)
+              flux (- b (aget bass (dec f)))
+              hit? (and (> b (* 1.35 avg)) (pos? flux) (> b 0.02) (> (- f last) 12))]
+          (when hit? (aset onset f 1.0))
+          (recur (inc f) (+ avg (* 0.06 (- b avg))) (if hit? f last)))))
+    {:samples samples :n n :hop hop :frames nf :rms rms :bass bass :onset onset
+     :duration (/ (double n) SR)}))
+
+(defn load [path] (analyze (decode path)))
+
+(defn next-beat
+  "Seconds from t until the next pre-detected onset, or nil within 2 s."
+  [track t]
+  (let [f0 (int (* t FPS-HOP)) on (:onset track) nf (:frames track)]
+    (loop [f f0]
+      (cond (or (>= f nf) (> (- f f0) (* 2 FPS-HOP))) nil
+            (pos? (aget on f)) (/ (double (- f f0)) FPS-HOP)
+            :else (recur (inc f))))))

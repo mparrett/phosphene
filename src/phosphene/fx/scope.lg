@@ -1,0 +1,34 @@
+(ns phosphene.fx.scope
+  "Diagnostic effect: spectrum bars with peak caps and the waveform on top.
+  Proves the pipeline end to end; the real effects build on the same inputs."
+  (:require [math] [phosphene.fb :as fb] [phosphene.listen :as listen]))
+
+(defn init [_fb] {})
+
+(defn draw [st {:keys [w h r g b] :as f} {:keys [bands peaks wave beat-env bass-att]}]
+  ;; Fade instead of clearing, so the waveform leaves a short trail.
+  (let [fade (- 0.78 (* 0.1 beat-env))]
+    (fb/fade! r g b fade))
+  (let [bw (/ (double w) listen/NBANDS)]
+    (dotimes [k listen/NBANDS]
+      (let [v (aget bands k) top (int (* h (- 1.0 v)))
+            hue (/ (double k) listen/NBANDS)
+            cr (+ 0.2 (* 0.8 hue)) cg (* 0.35 (- 1.0 hue)) cb (- 1.0 (* 0.6 hue))
+            x0 (int (* k bw)) x1 (int (* (inc k) bw))]
+        (loop [y top]
+          (when (< y h)
+            (let [fall (/ (double (- h y)) h)]
+              (loop [x x0]
+                (when (< x (dec x1))
+                  (fb/plot! f x y (* 0.25 cr fall) (* 0.25 cg fall) (* 0.25 cb fall))
+                  (recur (inc x)))))
+            (recur (inc y))))
+        (let [py (int (* h (- 1.0 (aget peaks k))))]
+          (loop [x x0] (when (< x (dec x1)) (fb/plot! f x py 0.9 0.9 1.0) (recur (inc x))))))))
+  (let [mid (/ h 2.0) amp (* h 0.45 (+ 1.0 (* 0.5 bass-att)))]
+    (dotimes [x w]
+      (let [s (aget wave (int (* x (/ (double listen/WAVE) w))))]
+        (fb/plot! f x (+ mid (* amp s)) 0.3 1.0 0.7))))
+  st)
+
+(def effect {:name "scope" :init init :draw draw})
