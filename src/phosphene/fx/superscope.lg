@@ -1,0 +1,76 @@
+(ns phosphene.fx.superscope
+  "AVS-style superscope. A preset is a map in its own namespace (see
+  phosphene.scopes.*):
+
+    :n       points per frame          :mode   :lines or :dots
+    :init    starting user vars        :decay  trail fade per frame
+    :frame   (fn [vars audio] vars)    :beat   (fn [vars audio] vars), on onsets
+    :point   (fn [s i v] [x y r g b])  — i in 0..1, v the waveform at i,
+             s = audio features + user vars + :aspect (width/height)
+    :zoom :rot :dx :dy :warp  optional MilkDrop-style movement under the trails
+
+  x and y are in -1..1 of the screen height (y down, as in AVS), so shapes
+  stay round; x may reach ±aspect to span the width."
+  (:require [math] [phosphene.fb :as fb] [phosphene.listen :as listen]
+            [phosphene.fx.milk :as milk]
+            [phosphene.scopes.helix :as helix]
+            [phosphene.scopes.knot :as knot]
+            [phosphene.scopes.rose :as rose]
+            [phosphene.scopes.orb :as orb]
+            [phosphene.scopes.aurora :as aurora]))
+
+(def presets [helix/preset knot/preset rose/preset orb/preset aurora/preset])
+
+(defn- line! [f x0 y0 x1 y1 cr cg cb]
+  (let [n (int (max 1 (math/ceil (max (abs (- x1 x0)) (abs (- y1 y0))))))]
+    (loop [s 0]
+      (if (<= s n)
+        (let [k (/ (double s) n)]
+          (fb/blend! f (+ x0 (* k (- x1 x0))) (+ y0 (* k (- y1 y0))) cr cg cb 0.9)
+          (recur (inc s)))
+        nil))))
+
+(defn- dot! [f x y cr cg cb]
+  (fb/blend! f x y cr cg cb 0.95)
+  ;; A faint cross gives dots a glow at terminal resolution.
+  (fb/blend! f (inc x) y cr cg cb 0.3) (fb/blend! f (dec x) y cr cg cb 0.3)
+  (fb/blend! f x (inc y) cr cg cb 0.3) (fb/blend! f x (dec y) cr cg cb 0.3))
+
+(defn init [{:keys [w h]}]
+  {:mu (double-array (* (inc milk/GX) (inc milk/GY)))
+   :mv (double-array (* (inc milk/GX) (inc milk/GY)))
+   :tr (double-array (* w h)) :tg (double-array (* w h)) :tb (double-array (* w h))
+   :preset nil :vars nil :last-i nil})
+
+(defn- trails! [st {:keys [w h r g b] :as f} p t]
+  (if (or (:zoom p) (:rot p) (:dx p) (:dy p))
+    (do (milk/build-mesh! st f p p t)
+        (milk/warp! r g b (:tr st) (:tg st) (:tb st) (:mu st) (:mv st) w h milk/GX milk/GY (:decay p 0.85))
+        (milk/copy! (:tr st) r) (milk/copy! (:tg st) g) (milk/copy! (:tb st) b))
+    (fb/fade! r g b (:decay p 0.85))))
+
+(defn draw [st {:keys [w h] :as f} {:keys [t beat beats wave] :as a}]
+  (let [pi   (or (:preset st) (mod (quot beats 24) (count presets)))
+        p    (nth presets pi)
+        vars (if (= pi (:last-i st)) (:vars st) (:init p {}))
+        vars (if (and beat (:beat p)) ((:beat p) vars a) vars)
+        vars (if (:frame p) ((:frame p) vars a) vars)
+        s    (merge a vars {:aspect (/ (double w) h)})
+        n    (:n p 200)
+        half (/ h 2.0) cx (/ w 2.0)
+        pt   (:point p)]
+    (trails! st f p t)
+    (loop [k 0 prev nil]
+      (if (< k n)
+        (let [i (/ (double k) (max 1 (dec n)))
+              v (aget wave (min (dec listen/WAVE) (int (* i listen/WAVE))))
+              [x y cr cg cb] (pt s i v)
+              px (+ cx (* x half)) py (+ half (* y half))]
+          (if (= :dots (:mode p))
+            (dot! f px py cr cg cb)
+            (if prev (let [[qx qy] prev] (line! f qx qy px py cr cg cb)) nil))
+          (recur (inc k) [px py]))
+        nil))
+    (assoc st :vars vars :last-i pi :preset-name (:name p))))
+
+(def effect {:name "superscope" :init init :draw draw})

@@ -1,0 +1,14 @@
+(ns phosphene.scopes.rose
+  "Rose curve r = cos(kθ) as dots; k changes on each beat."
+  (:require [math] [phosphene.scopes.kit :as k]))
+
+(def preset
+  {:name "rose bloom"
+   :n 520 :mode :dots :decay 0.86 :zoom 0.985 :rot -0.02
+   :init {:k 3.0}
+   :beat (fn [s _a] (assoc s :k (nth [2.0 3.0 5.0 7.0 1.5 2.5] (mod (inc (int (:k s))) 6))))
+   :point (fn [{:keys [k t bass-att beat-env]} i v]
+            (let [th (+ (* i 2.0 k/TAU) (* 0.15 t))
+                  r  (* (math/cos (* k th)) (+ 0.7 (* 0.15 bass-att) (* 0.35 v)))
+                  [cr cg cb] (k/hue (+ 0.02 (* 0.12 (math/abs r))) (+ 1.0 beat-env))]
+              [(* r (math/cos th)) (* r (math/sin th)) cr cg cb]))})

@@ -127,7 +127,7 @@
               :bright 0.45})
     :vertex (fn [p rad ang] (assoc p :zoom (+ (:zoom p) (* 0.03 (math/sin (+ (* 6.0 ang) (* 4.0 rad)))))))}])
 
-(defn- build-mesh!
+(defn build-mesh!
   "Fills mu/mv with the source pixel coordinate for every mesh vertex."
   [{:keys [mu mv]} {:keys [w h]} preset prm t]
   (let [half-h (/ h 2.0) cx 0.0 cy 0.0

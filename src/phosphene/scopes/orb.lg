@@ -1,0 +1,19 @@
+(ns phosphene.scopes.orb
+  "Fibonacci-sphere point cloud; the waveform pushes points off the surface."
+  (:require [math] [phosphene.scopes.kit :as k]))
+
+(def ^:private golden (* math/PI (- 3.0 (math/sqrt 5.0))))
+
+(def preset
+  {:name "orb"
+   :n 420 :mode :dots :decay 0.7
+   :point (fn [{:keys [t bass-att beat-env]} i v]
+            (let [y  (- 1.0 (* 2.0 i))
+                  rr (math/sqrt (max 0.0 (- 1.0 (* y y))))
+                  th (* golden i 419.0)
+                  r  (+ 0.55 (* 0.15 bass-att) (* 0.2 beat-env) (* 0.35 v))
+                  p  (k/rot3 (* r rr (math/cos th)) (* r y) (* r rr (math/sin th))
+                             (* 0.4 t) (* 0.25 t))
+                  [x y f] (k/proj p 2.0)
+                  b (* f f 1.4)]
+              [x y (* b 1.0) (* b 0.75) (* b 0.45)]))})

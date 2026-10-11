@@ -1,0 +1,17 @@
+(ns phosphene.scopes.helix
+  "Double helix. Points alternate strands, so :lines mode draws the rungs."
+  (:require [math] [phosphene.scopes.kit :as k]))
+
+(def preset
+  {:name "double helix"
+   :n 64 :mode :lines :decay 0.72
+   :frame (fn [s a] (assoc s :spin (+ (:spin s 0.0) (* (:dt a) (+ 0.6 (* 0.8 (:bass-att a)))))))
+   :point (fn [{:keys [spin t bass-att]} i v]
+            (let [strand (if (even? (int (* i 63))) 0.0 math/PI)
+                  th (+ (* i 3.0 math/PI) spin strand)
+                  r  (+ 0.35 (* 0.12 bass-att) (* 0.25 v))
+                  p  (k/rot3 (* r (math/cos th)) (- (* 2.2 i) 1.1) (* r (math/sin th))
+                             (* 0.35 (math/sin (* 0.3 t))) (* 0.2 t))
+                  [x y f] (k/proj p 2.5)
+                  [cr cg cb] (if (zero? strand) [0.2 1.0 0.9] [1.0 0.25 0.85])]
+              [x y (* cr f 1.2) (* cg f 1.2) (* cb f 1.2)]))})

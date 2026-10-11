@@ -5,17 +5,18 @@
             [phosphene.fb :as fb]
             [phosphene.fx.plasma :as plasma]
             [phosphene.fx.milk :as milk]
+            [phosphene.fx.superscope :as superscope]
             [phosphene.fx.scope :as scope]))
 
 (def ESC fb/ESC)
-(def effects [plasma/effect milk/effect scope/effect])
+(def effects [plasma/effect milk/effect superscope/effect scope/effect])
 
 (defn- shq [s] (str "'" (string/replace s "'" "'\\''") "'"))
 (defn- now-ms [] (System/currentTimeMillis))
 (defn- basename [p] (last (string/split p "/")))
 
 (defn- usage []
-  (println "usage: phosphene <audio-file> [--fx NAME] [--fps N] [--scale N] [--mute]")
+  (println "usage: phosphene <audio-file> [--fx NAME] [--fps N] [--scale N] [--preset N] [--mute]")
   (println "       phosphene <audio-file> --dump SECONDS OUT.ppm [--size WxH] [--fx NAME]")
   (println "       phosphene <audio-file> --bench FRAMES [--size WxH] [--fx NAME]")
   (os/exit 2))
@@ -26,6 +27,7 @@
       (case a
         "--fx"    (recur (rest more) (assoc opts :fx (first more)))
         "--scale" (recur (rest more) (assoc opts :scale (parse-int (first more))))
+        "--preset" (recur (rest more) (assoc opts :preset (parse-int (first more))))
         "--mute"  (recur more (assoc opts :mute true))
         "--fps"   (recur (rest more) (assoc opts :fps (parse-int (first more))))
         "--size"  (recur (rest more) (assoc opts :size (mapv parse-int (string/split (first more) "x"))))
@@ -45,11 +47,16 @@
 
 ;; ── Headless ─────────────────────────────────────────────────────────────
 
+(defn- init-fx
+  "Starts an effect; preset pins one of its presets instead of rotating."
+  [e f preset]
+  (cond-> ((:init e) f) preset (assoc :preset preset)))
+
 (defn- simulate
   "Runs frames at a fixed 30 fps from t0 to t1 into fb; returns ms/frame."
-  [track e f t0 t1]
+  [track e f t0 t1 preset]
   (let [ls (listen/make-state track t0) dt (/ 1.0 30)]
-    (loop [t t0 st ((:init e) f) n 0 ms 0]
+    (loop [t t0 st (init-fx e f preset) n 0 ms 0]
       (if (< t t1)
         (let [a0 (now-ms)
               a  (listen/frame ls track t dt)
@@ -57,7 +64,7 @@
           (recur (+ t dt) st (inc n) (+ ms (- (now-ms) a0))))
         (/ (double ms) (max 1 n))))))
 
-(defn- headless [{:keys [file dump bench size fx scale]}]
+(defn- headless [{:keys [file dump bench size fx scale preset]}]
   (let [[cols rows] (or size [160 48])
         track (audio/load file)
         e     (nth effects (fx-index fx))
@@ -66,12 +73,12 @@
                   (count (filter pos? (seq (:onset track)))) " onsets"))
     (when dump
       (let [[t out] dump]
-        (simulate track e f (max 0.0 (- t 3.0)) t)
+        (simulate track e f (max 0.0 (- t 3.0)) t preset)
         (spit out (fb/ppm f))
         (println "wrote" out)))
     (when bench
       (let [t0 (min 30.0 (* 0.3 (:duration track)))
-            ms (simulate track e f t0 (+ t0 (/ bench 30.0)))
+            ms (simulate track e f t0 (+ t0 (/ bench 30.0)) preset)
             a0 (now-ms)
             _  (dotimes [_ 10] (fb/ansi f cols rows 1))
             ams (/ (- (now-ms) a0) 10.0)]

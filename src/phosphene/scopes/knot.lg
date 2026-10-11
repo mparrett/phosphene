@@ -1,0 +1,18 @@
+(ns phosphene.scopes.knot
+  "Torus knot whose winding (q) steps on every fourth beat."
+  (:require [math] [phosphene.scopes.kit :as k]))
+
+(def preset
+  {:name "torus knot"
+   :n 320 :mode :lines :decay 0.84 :zoom 1.015 :rot 0.01
+   :init {:q 3}
+   :beat (fn [s a] (if (zero? (mod (:beats a) 4)) (assoc s :q (get {3 5, 5 7, 7 4, 4 3} (:q s) 3)) s))
+   :point (fn [{:keys [q t bass-att treb-att]} i v]
+            (let [ph (* i k/TAU)
+                  r  (+ 0.85 (* 0.3 (math/cos (* q ph))) (* 0.12 v))
+                  p  (k/rot3 (* r (math/cos (* 2.0 ph))) (* 0.25 (math/sin (* q ph)))
+                             (* r (math/sin (* 2.0 ph)))
+                             (+ 0.6 (* 0.3 (math/sin (* 0.4 t)))) (* (+ 0.3 (* 0.1 bass-att)) t))
+                  [x y f] (k/proj p 3.0)
+                  [cr cg cb] (k/hue (+ i (* 0.1 t)) (* f (+ 0.9 (* 0.3 treb-att))))]
+              [x y cr cg cb]))})

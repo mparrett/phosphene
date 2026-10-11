@@ -42,7 +42,7 @@ Work top to bottom. Tick each box when it runs end to end on a real track.
       displacement map; bass drives flow speed
 - [x] **MilkDrop-style feedback warp** — each frame zooms/rotates/fades the
       last one, a new waveform drawn on top; per-preset warp params
-- [ ] **AVS-style superscope** — presets are small lg fns from
+- [x] **AVS-style superscope** — presets are small lg fns from
       (i, n, wave sample, bands, t) → point; several built-in presets
 - [ ] Preset switching and crossfades between the three engines
 - [ ] Post FX that serve 1–3: bloom-ish glow, palette cycling
@@ -86,3 +86,9 @@ Each loop iteration appends one line: date, what landed, what's next.
   (circle, line, pseudo-XY) alpha-blended so feedback can't run away. Four
   presets: event horizon, lightspeed, desert wind, quantum foam; rotates every
   32 beats. VM: ~10 fps at scale 2. Next: AVS superscope.
+- 2026-10-10 — superscope landed: AVS-style presets as one namespace each
+  under phosphene.scopes (:init/:frame/:beat/:point, :lines or :dots,
+  optional MilkDrop movement under the trails), a 3D kit (rot3, proj, hue).
+  Five presets: double helix, torus knot, rose bloom, orb, aurora. `--preset
+  N` pins one. eval/load-string work on the VM, so the stretch editor is
+  feasible. VM: ~19–21 fps live at scale 2. Next: preset switching + fades.

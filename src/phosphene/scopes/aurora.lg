@@ -1,0 +1,14 @@
+(ns phosphene.scopes.aurora
+  "Waveform curtains across the full width, carried upward by the warp so
+  each frame's line becomes a rising sheet of light."
+  (:require [math] [phosphene.scopes.kit :as k]))
+
+(def preset
+  {:name "aurora"
+   :n 160 :mode :lines :decay 0.95 :zoom 1.0 :dy -0.014
+   :point (fn [{:keys [t aspect bass-att mid-att]} i v]
+            (let [x (* aspect (- (* 2.0 i) 1.0))
+                  y (+ 0.4 (* 0.12 (math/sin (+ (* i 7.0) (* 0.9 t))))
+                       (* (+ 0.15 (* 0.15 bass-att)) v))
+                  g (+ 0.6 (* 0.3 (math/sin (+ (* 3.0 i) t))))]
+              [x y (* 0.5 mid-att) (* 1.5 g) (+ 0.7 (* 0.7 (- 1.0 g)))]))})

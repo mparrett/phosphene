@@ -1,0 +1,25 @@
+(ns phosphene.scopes.kit
+  "Helpers for superscope presets: 3D rotation, perspective, colour."
+  (:require [math]))
+
+(def TAU (* 2.0 math/PI))
+
+(defn rot3
+  "Rotates [x y z] by ay around the y axis, then ax around the x axis."
+  [x y z ax ay]
+  (let [cy (math/cos ay) sy (math/sin ay)
+        x1 (+ (* x cy) (* z sy)) z1 (- (* z cy) (* x sy))
+        cx (math/cos ax) sx (math/sin ax)
+        y2 (- (* y cx) (* z1 sx)) z2 (+ (* y sx) (* z1 cx))]
+    [x1 y2 z2]))
+
+(defn proj
+  "Perspective onto the screen plane; returns [x y depth-scale]."
+  [[x y z] d]
+  (let [f (/ d (+ d z 1.0))] [(* x f) (* y f) f]))
+
+(defn hue
+  "Cosine-rainbow colour at h (wraps every 1.0), scaled by bright."
+  [h bright]
+  (let [c (fn [o] (* bright (+ 0.5 (* 0.5 (math/cos (* TAU (+ h o)))))))]
+    [(c 0.0) (c 0.67) (c 0.33)]))
