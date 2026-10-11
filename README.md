@@ -25,7 +25,8 @@ techno cue composed for phosphene in [Slab](https://github.com/nooga/slab), a
 livecoded macOS DAW by [@nooga](https://github.com/nooga)
 ([site](https://slab-site-three.vercel.app/#listen)). It comes as a full
 89-second track and a 16-bar loop of the drop, both lossless FLAC, along with
-the editable Slab project.
+the editable Slab project. The music is
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the code is MIT.
 
     bin/phosphene music/sodium-uv/sodium_uv_full.flac
 

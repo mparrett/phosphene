@@ -52,3 +52,10 @@ Play it through phosphene from this repo's root:
 ```sh
 bin/phosphene music/sodium-uv/sodium_uv_full.flac
 ```
+
+## Licence
+
+*Sodium / UV* (the audio, the Slab project and its generator) by Matt Parrett,
+composed with Slab, is licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The rest of this
+repository is MIT.
