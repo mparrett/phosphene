@@ -12,7 +12,7 @@
 (defn- basename [p] (last (string/split p "/")))
 
 (defn- usage []
-  (println "usage: phosphene <audio-file> [--fx NAME [--preset N]] [--fps N] [--scale N] [--mute]")
+  (println "usage: phosphene <audio-file> [--fx NAME [--preset N]] [--fps N] [--scale N] [--mute] [--no-post]")
   (println "       phosphene <audio-file> --dump SECONDS OUT.ppm [--size WxH] [--warm S] [--fx NAME]")
   (println "       phosphene <audio-file> --bench FRAMES [--size WxH] [--fx NAME]")
   (println "Without --fx, scenes change automatically every 32 beats (toggle with a).")
@@ -27,6 +27,7 @@
         "--preset" (recur (rest more) (assoc opts :preset (parse-int (first more))))
         "--warm"   (recur (rest more) (assoc opts :warm (parse-double (first more))))
         "--mute"   (recur more (assoc opts :mute true))
+        "--no-post" (recur more (assoc opts :no-post true))
         "--fps"    (recur (rest more) (assoc opts :fps (parse-int (first more))))
         "--size"   (recur (rest more) (assoc opts :size (mapv parse-int (string/split (first more) "x"))))
         "--dump"   (recur (drop 2 more) (assoc opts :dump [(parse-double (first more)) (second more)]))
@@ -40,8 +41,8 @@
   (assoc (fb/make (max 8 (quot cols scale)) (max 8 (quot (* 2 rows) scale)))
          :cols cols :rows rows))
 
-(defn- director [shape {:keys [fx preset]}]
-  (dir/make shape (if fx (dir/scene-index fx preset) (first dir/auto-order)) (nil? fx)))
+(defn- director [shape {:keys [fx preset no-post]}]
+  (dir/make shape (if fx (dir/scene-index fx preset) (first dir/auto-order)) (nil? fx) (not no-post)))
 
 ;; ── Headless ─────────────────────────────────────────────────────────────
 
@@ -136,12 +137,14 @@
                   (or (= k "q") (= k (str (char 3))) (= k ESC)
                       (> t (+ 0.5 (:duration track)))) nil
                   resized
-                  (let [nd (dir/make (screen-fb c (dec r) (or scale 2)) (:i (:cur d)) (:auto d))]
+                  (let [nd (dir/make (screen-fb c (dec r) (or scale 2)) (:i (:cur d)) (:auto d) (some? (:post d)))]
                     (term/clear)
                     (recur nd ls t0 paused-at frame-start fps-avg))
                   (= k right) (recur (dir/step-scene d 1) ls t0 paused-at frame-start fps-avg)
                   (= k left)  (recur (dir/step-scene d -1) ls t0 paused-at frame-start fps-avg)
                   (= k "a")   (recur (update d :auto not) ls t0 paused-at frame-start fps-avg)
+                  (= k "b")   (recur (dir/toggle-post d :bloom) ls t0 paused-at frame-start fps-avg)
+                  (= k "c")   (recur (dir/toggle-post d :cycle) ls t0 paused-at frame-start fps-avg)
                   (= k " ")
                   (if paused-at
                     (do (signal pid "CONT")

@@ -3,7 +3,7 @@
   crossfades. A new scene starts from a copy of the frame on screen, so the
   feedback engines morph out of the old picture the way MilkDrop's preset
   transitions do, while the crossfade hides the first frames of the switch."
-  (:require [math] [phosphene.fb :as fb]
+  (:require [math] [phosphene.fb :as fb] [phosphene.post :as post]
             [phosphene.fx.plasma :as plasma]
             [phosphene.fx.milk :as milk]
             [phosphene.fx.superscope :as superscope]
@@ -64,13 +64,15 @@
 
 (defn make
   "shape: a framebuffer whose dims (and :cols/:rows) every scene copies."
-  [shape i auto?]
+  [shape i auto? post?]
   {:cur (start-scene i shape nil) :out nil :fade 1.0
-   :disp (blank-like shape) :shown nil
+   :disp (blank-like shape) :raw nil :shown nil
+   :post (when post? (post/make shape))
    :auto auto? :next-beats nil :next-t nil})
 
 (defn switch [d i]
-  (let [seed (or (:shown d) (:f (:cur d)))]
+  ;; Seed from the pre-post frame so bloom and hue shift don't feed back.
+  (let [seed (or (:raw d) (:f (:cur d)))]
     (assoc d :out (:cur d) :fade 0.0
            :cur (start-scene (mod i (count scenes)) (:disp d) seed)
            :next-beats nil :next-t nil)))
@@ -88,6 +90,13 @@
 (defn- run [{:keys [i st f] :as sc} a]
   (assoc sc :st ((:draw (:fx (nth scenes i))) st f a)))
 
+(defn- finish [d raw a]
+  (if-let [p (:post d)]
+    (let [[p out] (post/run p raw a)] (assoc d :raw raw :post p :shown out))
+    (assoc d :raw raw :shown raw)))
+
+(defn toggle-post [d k] (if (:post d) (update-in d [:post k] not) d))
+
 (defn step
   "Advances one frame; returns the director with :shown set to the frame
   to display."
@@ -104,5 +113,5 @@
             k    (* fade fade (- 3.0 (* 2.0 fade)))   ; smoothstep
             {of :f} out {cf :f} cur disp (:disp d)]
         (mix! (:r of) (:g of) (:b of) (:r cf) (:g cf) (:b cf) (:r disp) (:g disp) (:b disp) k)
-        (assoc d :cur cur :out (when (< fade 1.0) out) :fade fade :shown disp))
-      (assoc d :cur cur :shown (:f cur)))))
+        (finish (assoc d :cur cur :out (when (< fade 1.0) out) :fade fade) disp a))
+      (finish (assoc d :cur cur) (:f cur) a))))

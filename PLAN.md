@@ -45,7 +45,7 @@ Work top to bottom. Tick each box when it runs end to end on a real track.
 - [x] **AVS-style superscope** — presets are small lg fns from
       (i, n, wave sample, bands, t) → point; several built-in presets
 - [x] Preset switching and crossfades between the three engines
-- [ ] Post FX that serve 1–3: bloom-ish glow, palette cycling
+- [x] Post FX that serve 1–3: bloom-ish glow, palette cycling
 - [ ] Stretch: **live preset editor** — a legmacs-style mini editor pane where
       you edit the actual lg of a superscope/warp preset and it hot-reloads
 
@@ -96,3 +96,9 @@ Each loop iteration appends one line: date, what landed, what's next.
   interleaves engines and switches every 32 beats (30 s fallback); a new scene
   is seeded with the frame on screen and crossfaded over 1.5 s, so feedback
   effects morph out of the old picture. Keys ←/→, a. Next: post FX.
+- 2026-10-10 — post landed: half-res bright-pass + separable box-blur bloom,
+  hue-rotation matrix wobbling with treble and kicking on beats, vignette,
+  beat exposure lift; runs on the displayed frame only and scenes seed from
+  the pre-post frame. Keys b / c, `--no-post`. Sprint 1 done except the
+  stretch editor. VM, as of today: ~15–20 fps at 160×48 cells, scale 2,
+  noisy under machine load.

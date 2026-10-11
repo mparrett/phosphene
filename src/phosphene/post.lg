@@ -1,0 +1,116 @@
+(ns phosphene.post
+  "Post-processing on the displayed frame only, never on an effect's own
+  buffer, so feedback effects don't re-ingest their bloom.
+
+  Bloom: bright-pass at half resolution, separable box blur, add back.
+  Palette cycling: a hue-rotation matrix whose angle wobbles with the music.
+  Plus a vignette and a small exposure lift on beats."
+  (:require [math] [phosphene.fb :as fb]))
+
+;; ── Kernels ─────────────────────────────────────────────────────────────
+
+(defn bright-pass!
+  "2×2-averages src into the half-size buffer, keeping only light above
+  thresh."
+  [^doubles r ^doubles g ^doubles b w ^doubles sr ^doubles sg ^doubles sb sw sh ^double thresh]
+  (loop [y 0]
+    (if (< y sh)
+      (do (loop [x 0]
+            (if (< x sw)
+              (let [i0 (+ (* 2 x) (* 2 y w)) i1 (inc i0) i2 (+ i0 w) i3 (inc i2)
+                    o  (+ x (* y sw))]
+                (aset sr o (max 0.0 (- (* 0.25 (+ (aget r i0) (aget r i1) (aget r i2) (aget r i3))) thresh)))
+                (aset sg o (max 0.0 (- (* 0.25 (+ (aget g i0) (aget g i1) (aget g i2) (aget g i3))) thresh)))
+                (aset sb o (max 0.0 (- (* 0.25 (+ (aget b i0) (aget b i1) (aget b i2) (aget b i3))) thresh)))
+                (recur (inc x)))
+              nil))
+          (recur (inc y)))
+      nil)))
+
+(defn box-blur!
+  "5-tap box blur of src into dst along one axis: step 1 for rows, sw for
+  columns; len is the axis length, lines and lstep walk the other axis."
+  [^doubles src ^doubles dst sw sh step len lines lstep]
+  (loop [l 0]
+    (if (< l lines)
+      (let [base (* l lstep)]
+        (loop [k 0]
+          (if (< k len)
+            (let [a0 (max 0 (- k 2)) a1 (min (dec len) (+ k 2))
+                  s  (loop [j a0 acc 0.0]
+                       (if (<= j a1) (recur (inc j) (+ acc (aget src (+ base (* j step))))) acc))]
+              (aset dst (+ base (* k step)) (* 0.2 s))
+              (recur (inc k)))
+            nil))
+        (recur (inc l)))
+      nil)))
+
+(defn composite!
+  "out = M · (src + k·bloom) · vignette · gain, with the hue matrix M as 9
+  doubles."
+  [^doubles r ^doubles g ^doubles b w h
+   ^doubles br ^doubles bg ^doubles bb sw sh
+   ^doubles vig ^doubles m ^doubles orr ^doubles og ^doubles ob ^double k ^double gain]
+  (let [m0 (aget m 0) m1 (aget m 1) m2 (aget m 2)
+        m3 (aget m 3) m4 (aget m 4) m5 (aget m 5)
+        m6 (aget m 6) m7 (aget m 7) m8 (aget m 8)]
+    (loop [y 0]
+      (if (< y h)
+        (do (loop [x 0]
+              (if (< x w)
+                (let [i  (+ x (* y w))
+                      si (+ (min (dec sw) (quot x 2)) (* (min (dec sh) (quot y 2)) sw))
+                      cr (+ (aget r i) (* k (aget br si)))
+                      cg (+ (aget g i) (* k (aget bg si)))
+                      cb (+ (aget b i) (* k (aget bb si)))
+                      v  (* gain (aget vig i))]
+                  (aset orr i (* v (+ (* m0 cr) (* m1 cg) (* m2 cb))))
+                  (aset og i (* v (+ (* m3 cr) (* m4 cg) (* m5 cb))))
+                  (aset ob i (* v (+ (* m6 cr) (* m7 cg) (* m8 cb))))
+                  (recur (inc x)))
+                nil))
+            (recur (inc y)))
+        nil))))
+
+;; ── Driver ──────────────────────────────────────────────────────────────
+
+(defn- vignette [w h]
+  (let [a (double-array (* w h)) cx (/ w 2.0) cy (/ h 2.0)]
+    (dotimes [y h]
+      (dotimes [x w]
+        (let [dx (/ (- x cx) cx) dy (/ (- y cy) cy)
+              d2 (+ (* 0.6 dx dx) (* dy dy))]
+          (aset a (+ x (* y w)) (max 0.25 (- 1.05 (* 0.45 d2)))))))
+    a))
+
+(defn make [{:keys [w h] :as shape}]
+  (let [sw (max 1 (quot w 2)) sh (max 1 (quot h 2)) n (* sw sh)]
+    {:out (merge shape (fb/make w h)) :sw sw :sh sh
+     :sr (double-array n) :sg (double-array n) :sb (double-array n)
+     :tr (double-array n) :tg (double-array n) :tb (double-array n)
+     :vig (vignette w h) :m (double-array 9)
+     :hue-clock 0.0 :bloom true :cycle true}))
+
+(defn- hue-matrix! [^doubles m angle]
+  (let [c (math/cos angle) s (math/sin angle)
+        t (/ (- 1.0 c) 3.0) q (* (math/sqrt (/ 1.0 3.0)) s)
+        a (+ c t) b (- t q) d (+ t q)]
+    (doseq [[i v] (map-indexed vector [a b d d a b b d a])] (aset m i v))))
+
+(defn run
+  "Post-processes src; returns [post-state out-fb]."
+  [p {:keys [w h r g b]} {:keys [dt bass-att treb-att beat beat-env]}]
+  (let [{:keys [sw sh sr sg sb tr tg tb vig m out]} p
+        clock (+ (:hue-clock p) (* dt (+ 0.05 (* 0.05 treb-att))) (if beat 0.08 0.0))
+        ;; A wobble, not a full spin: the presets' palettes stay recognisable.
+        angle (if (:cycle p) (* 0.4 (math/sin clock)) 0.0)
+        bloom (if (:bloom p) (+ 0.45 (* 0.25 (min 2.0 bass-att))) 0.0)]
+    (hue-matrix! m angle)
+    (when (:bloom p)
+      (bright-pass! r g b w sr sg sb sw sh 0.5)
+      (box-blur! sr tr sw sh 1 sw sh sw) (box-blur! tr sr sw sh sw sh sw 1)
+      (box-blur! sg tg sw sh 1 sw sh sw) (box-blur! tg sg sw sh sw sh sw 1)
+      (box-blur! sb tb sw sh 1 sw sh sw) (box-blur! tb sb sw sh sw sh sw 1))
+    (composite! r g b w h sr sg sb sw sh vig m (:r out) (:g out) (:b out)
+                bloom (+ 1.0 (* 0.18 beat-env)))
+    [(assoc p :hue-clock clock) out]))
