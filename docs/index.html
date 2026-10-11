@@ -1,25 +1,25 @@
 <title>phosphene dev log</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Instrument+Sans:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tektur:wght@500;700&family=Familjen+Grotesk:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
 /* Layout: a single reading column; video plates break wider like a gallery wall.
    Single-theme by choice: the page is the dark room the visualizer plays in. */
 :root {
-  --ground: #0e0b15;      /* desert night, violet-biased */
-  --plate: #17121f;       /* raised surfaces: code, figures */
-  --rule: #2c2438;
-  --sand: #eadfcb;        /* body text */
-  --dust: #a99c8c;        /* secondary text */
-  --sodium: #ffb04a;      /* accent: sodium lamp */
+  --ground: #07090b;      /* CRT black, faintly green */
+  --plate: #0d1413;       /* raised surfaces: code, figures */
+  --rule: #1e2b28;
+  --sand: #dde8e2;        /* body text */
+  --dust: #8ea39a;        /* secondary text */
+  --phosphor: #5cff9a;    /* accent: P1 phosphor */
   --uv: #b98cff;          /* second accent, used sparingly */
-  --display: "Unbounded", "Avenir Next", system-ui, sans-serif;
-  --body: "Instrument Sans", "Helvetica Neue", system-ui, sans-serif;
+  --display: "Tektur", "Avenir Next", system-ui, sans-serif;
+  --body: "Familjen Grotesk", "Helvetica Neue", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { background: var(--ground); color: var(--sand); font: 17px/1.62 var(--body); }
+body { background: var(--ground); color: var(--sand); font: 18px/1.62 var(--body); }
 .wrap { max-width: 1120px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 96px; }
 .col { max-width: 680px; }
 h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.12; text-wrap: balance; margin: 0; }
@@ -27,14 +27,14 @@ h1 { font-size: clamp(2.6rem, 8vw, 5.2rem); letter-spacing: -0.02em; }
 h2 { font-size: clamp(1.4rem, 3.4vw, 2rem); margin-top: 88px; }
 h3 { font-size: 1.05rem; font-weight: 500; margin-top: 36px; }
 p { margin: 14px 0 0; }
-a { color: var(--sodium); }
-.eyebrow { font: 600 12px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--sodium); }
+a { color: var(--phosphor); }
+.eyebrow { font: 600 12px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--phosphor); }
 .lede { font-size: 1.2rem; color: var(--sand); max-width: 640px; margin-top: 20px; }
 .meta { font: 13px/1.6 var(--mono); color: var(--dust); margin-top: 18px; }
 code, pre { font-family: var(--mono); font-size: 0.86em; }
-:not(pre) > code { background: var(--plate); padding: 1px 5px; border-radius: 3px; color: #f3d9b0; }
+:not(pre) > code { background: var(--plate); padding: 1px 5px; border-radius: 3px; color: #c6f5d6; }
 pre { background: var(--plate); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; overflow-x: auto; line-height: 1.5; margin: 18px 0 0; }
-.k { color: var(--uv); } .s { color: var(--sodium); } .c { color: #7d7290; }
+.k { color: var(--uv); } .s { color: var(--phosphor); } .c { color: #5f746c; }
 
 /* Video plates read as terminal windows: a thin title bar, then the picture. */
 figure { margin: 0; min-width: 0; }
@@ -43,19 +43,19 @@ figure { margin: 0; min-width: 0; }
 .term .bar i { width: 8px; height: 8px; border-radius: 50%; background: var(--rule); display: inline-block; }
 .term .bar span { margin-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .term video { display: block; width: 100%; aspect-ratio: 16 / 9; image-rendering: pixelated; background: #000; }
-figcaption { font-size: 14px; color: var(--dust); margin-top: 8px; line-height: 1.45; }
+figcaption { font-size: 15px; color: var(--dust); margin-top: 8px; line-height: 1.45; }
 figcaption b { color: var(--sand); font-weight: 600; }
 .hero { margin-top: 40px; }
 .grid { display: grid; gap: 22px; margin-top: 26px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
 .grid.two { grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr)); }
-.sound { margin-top: 10px; font: 13px var(--mono); background: transparent; color: var(--sodium); border: 1px solid var(--sodium); border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+.sound { margin-top: 10px; font: 13px var(--mono); background: transparent; color: var(--phosphor); border: 1px solid var(--phosphor); border-radius: 4px; padding: 6px 10px; cursor: pointer; }
 .sound:focus-visible, a:focus-visible { outline: 2px solid var(--uv); outline-offset: 2px; }
 
 /* Pipeline diagram: a horizontal chain that stacks on phones. */
 .pipe { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-top: 26px; }
 .stage { flex: 1 1 150px; min-width: 0; background: var(--plate); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; }
-.stage b { display: block; font: 600 13px var(--mono); color: var(--sodium); }
-.stage small { display: block; font-size: 13.5px; color: var(--dust); line-height: 1.4; margin-top: 4px; }
+.stage b { display: block; font: 600 13px var(--mono); color: var(--phosphor); }
+.stage small { display: block; font-size: 14.5px; color: var(--dust); line-height: 1.4; margin-top: 4px; }
 .stage.hot { border-color: #5a4378; }
 .stage.hot b { color: var(--uv); }
 
@@ -65,21 +65,21 @@ figcaption b { color: var(--sand); font-weight: 600; }
 .cell div:first-child { background: #ff7a3d; } .cell div:last-child { background: #3b2a7a; }
 .cells pre { margin: 0; flex: 1 1 300px; }
 
-table { border-collapse: collapse; width: 100%; font-size: 15px; font-variant-numeric: tabular-nums; }
+table { border-collapse: collapse; width: 100%; font-size: 16px; font-variant-numeric: tabular-nums; }
 .tablewrap { overflow-x: auto; margin-top: 20px; }
 th, td { text-align: left; padding: 9px 12px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
 th { font: 600 11px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--dust); }
-td.n { font-family: var(--mono); white-space: nowrap; color: var(--sodium); }
+td.n { font-family: var(--mono); white-space: nowrap; color: var(--phosphor); }
 
 .log { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 0; }
 .log li { display: grid; grid-template-columns: 88px 1fr; gap: 16px; padding: 14px 0; border-top: 1px solid var(--rule); }
 .log li > * { min-width: 0; }
 .log .sha { font: 13px var(--mono); color: var(--uv); padding-top: 3px; }
 .log b { font-family: var(--display); font-weight: 500; font-size: 15px; }
-.log p { font-size: 15.5px; color: var(--dust); margin-top: 4px; }
+.log p { font-size: 16.5px; color: var(--dust); margin-top: 4px; }
 .keys kbd { font: 12px var(--mono); border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 3px; padding: 1px 6px; background: var(--plate); color: var(--sand); }
 @media (prefers-reduced-motion: reduce) { video { animation: none; } }
-@media (max-width: 520px) { .log li { grid-template-columns: 1fr; gap: 4px; } body { font-size: 16px; } }
+@media (max-width: 520px) { .log li { grid-template-columns: 1fr; gap: 4px; } body { font-size: 17px; } }
 </style>
 
 <div class="wrap">
