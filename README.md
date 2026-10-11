@@ -18,6 +18,17 @@ Rendered headless from the repo at 192×54 cells. The [dev log](https://phosphen
 Needs `lg` (let-go ≥ 1.13), `ffmpeg`, `perl`, and `afplay` (macOS) for playback.
 `scripts/mk-test-track.py out.wav` writes a 40 s, 124 BPM test track.
 
+## Music
+
+[`music/sodium-uv/`](music/sodium-uv/) holds *Sodium / UV*, a 124 BPM melodic
+techno cue composed for phosphene in [Slab](https://github.com/nooga/slab), a
+livecoded macOS DAW by [@nooga](https://github.com/nooga)
+([site](https://slab-site-three.vercel.app/#listen)). It comes as a full
+89-second track and a 16-bar loop of the drop, both lossless FLAC, along with
+the editable Slab project.
+
+    bin/phosphene music/sodium-uv/sodium_uv_full.flac
+
 ## Limitations
 
 - **Playback is macOS only.** It shells out to `afplay`; on Linux the visuals
