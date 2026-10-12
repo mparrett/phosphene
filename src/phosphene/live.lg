@@ -127,17 +127,19 @@
                      (or beat? hit?)))
             [s beat?]))
         s   (if (not= h (:seen s)) (assoc s :seen h :seen-ms now) s)
-        g   (or (:gain s) MAX-GAIN)
+        ;; With no new samples the ring holds the last sound forever, so a
+        ;; lost source reads as silence rather than a frozen picture.
+        lost (or @closed (> (- now (:seen-ms s)) STALL-MS))
+        g   (if lost 0.0 (or (:gain s) MAX-GAIN))
+        rms (if lost 0.0 (:rms s))
         n   (alength window)]
     (dotimes [i n]
       (let [j (+ (- h n) i)]
         (aset window i (if (neg? j) 0.0 (* g (aget ring (mod j RING)))))))
     (reset! st s)
-    {:window window :beat? beat? :rms (:rms s)
-     :level (/ (:rms s) TARGET)
-     :stalled (or @closed
-                  (> (- now (:seen-ms s)) STALL-MS)
-                  (> (- now (:sound-ms s)) STALL-MS))}))
+    {:window window :beat? beat? :rms rms
+     :level (/ rms TARGET)
+     :stalled (or lost (> (- now (:sound-ms s)) STALL-MS))}))
 
 (defn frame
   "listen features from the latest live audio, at wall-clock time t."
