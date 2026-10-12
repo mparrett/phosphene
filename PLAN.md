@@ -10,7 +10,8 @@ Winamp-plugin lineage; demoscene × linux × agentic coding × desert rave.
   bands, envelopes, beat onsets and loudness, so the render loop does no FFT
   and the effects can react a moment ahead of a kick.
 - **Play:** `afplay` in the background; frames follow the wall clock from its
-  start. Slab can later replace this by streaming PCM in.
+  start. Live input (`--mic`, or `--pcm` for Slab) skips decode and
+  pre-pass: samples stream into a ring and onsets are found per hop.
 - **Render:** half-block `▀` cells (fg/bg truecolor = 2 px per cell) into a
   framebuffer, written as one string per frame; braille for fine line work.
 - **Keys:** `←/→` switch effect, `space` pause, `q` quit.
@@ -65,7 +66,13 @@ agent-style HUD strip.
 
 ## Later phase
 
-Feed live audio from Slab instead of a file.
+Browser build. As of 2026-10-12, let-go's WASM build takes only key presses
+from JS (`os/sh` and `net` are unavailable), so it needs an upstream sample channel:
+an AudioWorklet writing into a SharedArrayBuffer ring, the same shape as
+the key ring. `live.lg` already polls a ring per frame, so only its feed
+changes; files would play and decode in the browser and go through that
+same path. Measure the VM's frame rate under WASM first. Hosting needs
+COOP/COEP headers for SharedArrayBuffer.
 
 ## Log
 
@@ -108,3 +115,7 @@ Each loop iteration appends one line: date, what landed, what's next.
   the pre-pass rule, auto-gain tracks a slow peak. A socket because lg can't
   yet read a running child's stdout. VM: 10–17 fps at 160×49 cells, scale 2,
   fed a streamed track. Next: a real mic run.
+- 2026-10-12 — real mic run works; review fixes: denied-mic silence shows
+  "no signal", connect waits out the macOS permission prompt, ffmpeg exits
+  on its own if phosphene dies. Next: tune live input (hiss under the gain
+  cap, onset thresholds).

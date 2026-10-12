@@ -38,9 +38,11 @@ To just listen: [phosphene.aibuilds.me/sodium-uv.mp3](https://phosphene.aibuilds
 
 - **Playback is macOS only.** It shells out to `afplay`; on Linux the visuals
   run but there's no sound until an `aplay` (or similar) path lands.
-- **Terminal only.** There's no browser build yet. let-go can compile to a
-  WASM page, but phosphene shells out to ffmpeg, so a browser version needs a
-  way to pass audio from JS into lg.
+- **Terminal only.** There's no browser build yet. let-go compiles to a WASM
+  page with a terminal and a canvas, but there `os/sh` and `net` are
+  unavailable and only key presses come in from JS, so neither decoding nor
+  live input has a path. A browser version needs a sample channel from JS
+  (an AudioWorklet writing into a shared ring) feeding the live path.
 - **Mic input is macOS only** (ffmpeg's avfoundation). macOS grants mic access
   to the terminal app, or under tmux to whichever app started the tmux server;
   if it's denied, ffmpeg delivers silence and the HUD shows "no signal". Live
