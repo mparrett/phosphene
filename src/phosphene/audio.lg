@@ -1,9 +1,9 @@
 (ns phosphene.audio
   (:require [string] [math] [os]))
 
-;; Decoding goes through text because lg reads files as strings: raw PCM bytes
-;; above 0x7f come back as U+FFFD, so ffmpeg's s16le goes through perl's unpack
-;; (~3x faster than od here) and is parsed as decimal lines.
+;; lg reads files as strings, but the string keeps the raw bytes: only walking
+;; it as characters turns bytes above 0x7f into U+FFFD. `bytes` hands back the
+;; originals, so ffmpeg's s16le is read directly.
 
 (def SR 22050)
 
@@ -12,7 +12,19 @@
 (defn- temp-path
   "Unique per run: concurrent decodes of the same file must not share it."
   [path]
-  (str (os/temp-dir) "/phosphene-" (hash path) "-" (System/nanoTime) ".txt"))
+  (str (os/temp-dir) "/phosphene-" (hash path) "-" (System/nanoTime) ".pcm"))
+
+(defn- s16le->doubles!
+  "Kernel: little-endian int16 pairs in b (unsigned byte values) → samples
+  in [-1, 1)."
+  [b ^doubles out]
+  (let [n (alength out)]
+    (loop [i 0]
+      (if (< i n)
+        (let [v (+ (aget b (* 2 i)) (* 256 (aget b (inc (* 2 i)))))]
+          (aset out i (/ (double (if (> v 32767) (- v 65536) v)) 32768.0))
+          (recur (inc i)))
+        out))))
 
 (defn decode
   "Decodes any ffmpeg-readable file to a mono double-array at SR."
@@ -20,19 +32,13 @@
   (when-not (file-exists? path)
     (throw (ex-info (str "no such file: " path) {})))
   (let [out (temp-path path)
-        cmd (str "ffmpeg -nostdin -v error -i " (shq path)
-                 " -ac 1 -ar " SR " -f s16le - | perl -0777 -ne 'print join(\"\\n\",unpack(\"s<*\",$_))' > " (shq out))
-        res (os/sh "sh" "-c" cmd)]
+        res (os/sh "ffmpeg" "-nostdin" "-v" "error" "-i" path
+                   "-ac" "1" "-ar" (str SR) "-f" "s16le" out)]
     (when-not (zero? (:exit res))
       (throw (ex-info (str "ffmpeg failed: " (:err res)) {})))
-    (let [lines (remove string/blank? (string/split (slurp out) "\n"))
-          a     (double-array (count lines))]
+    (let [b (bytes (slurp out))]
       (delete-file out)
-      (loop [i 0 xs (seq lines)]
-        (when xs
-          (aset a i (/ (double (parse-int (first xs))) 32768.0))
-          (recur (inc i) (next xs))))
-      a)))
+      (s16le->doubles! b (double-array (quot (count b) 2))))))
 
 ;; ── Pre-pass ─────────────────────────────────────────────────────────────
 ;; A full-track FFT is too slow on the VM (~6 ms per 1024 points), so the
