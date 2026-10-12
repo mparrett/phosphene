@@ -102,3 +102,9 @@ Each loop iteration appends one line: date, what landed, what's next.
   the pre-post frame. Keys b / c, `--no-post`. Sprint 1 done except the
   stretch editor. VM, as of today: ~15–20 fps at 160×48 cells, scale 2,
   noisy under machine load.
+- 2026-10-11 — live input landed: `--mic` runs ffmpeg as a localhost PCM
+  server and `--pcm PORT` attaches to any other (Slab's way in); a future
+  reads `net/read!` byte-arrays into a 4 s ring, onsets run hop by hop with
+  the pre-pass rule, auto-gain tracks a slow peak. A socket because lg can't
+  yet read a running child's stdout. VM: 10–17 fps at 160×49 cells, scale 2,
+  fed a streamed track. Next: a real mic run.
