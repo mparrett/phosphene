@@ -2,8 +2,7 @@
   "Per-frame audio features, shaped like MilkDrop's: bass/mid/treb hover
   around 1.0 relative to their own recent average, with *-att smoothed
   versions for slower motion."
-  (:require [math] [phosphene.fft :as fft] [phosphene.audio :as audio]
-            [phosphene.live :as live]))
+  (:require [math] [phosphene.fft :as fft] [phosphene.audio :as audio]))
 
 (def NBANDS 32)
 (def WAVE 512)
@@ -39,7 +38,7 @@
 
 (defn- rel [x avg] (if (> avg 1e-6) (/ x avg) 0.0))
 
-(defn- features
+(defn features
   "Features from the samples ending at index end. dt is the time since the
   previous call, used for smoothing that stays frame-rate independent; beat?
   and rms come from the caller's onset detection."
@@ -98,10 +97,3 @@
         rms (if (< f (:frames track)) (aget (:rms track) f) 0.0)]
     (assoc (features st (:samples track) (min (:n track) (int (* t audio/SR))) t dt beat? rms)
            :next-beat (audio/next-beat track t))))
-
-(defn frame-live
-  "Features from a phosphene.live source, at wall-clock time t."
-  [st src t dt]
-  (let [{:keys [window beat? rms level stalled]} (live/poll! src)]
-    (assoc (features st window (alength window) t dt beat? rms)
-           :level level :stalled stalled)))

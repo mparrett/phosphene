@@ -5,19 +5,29 @@
   the source is a socket: --mic starts ffmpeg as the server, --pcm attaches
   to any other one."
   (:require [string] [math] [os] [net]
-            [phosphene.audio :as audio] [phosphene.fft :as fft]))
+            [phosphene.audio :as audio] [phosphene.fft :as fft]
+            [phosphene.listen :as listen]))
 
 (def ^:private RING (* 4 audio/SR))
 (def ^:private HOP (quot audio/SR audio/FPS-HOP))
 
 ;; Mic levels vary by tens of dB across rooms and devices, so the hop rms is
 ;; normalised against a slow peak to sit where a mastered track does (hop
-;; rms p99 ≈ 0.4, p90 ≈ 0.22 for Sodium / UV). The gain cap keeps a quiet
-;; room's hiss from being pumped up to full scale.
+;; rms p99 ≈ 0.4, p90 ≈ 0.22 for Sodium / UV, as of 2026-10-11). The gain
+;; cap keeps a quiet room's hiss from being pumped up to full scale.
 (def ^:private TARGET 0.3)
 (def ^:private MAX-GAIN 30.0)
 (def ^:private PEAK-RELEASE-S 10.0)
 (def ^:private STALL-MS 1000)
+;; A mic's noise floor sits far above this; only digital zeros fall below,
+;; which is what a denied mic permission delivers instead of an error.
+(def ^:private SILENT 1e-6)
+
+;; The first --mic run from a new terminal waits on macOS's permission
+;; prompt before ffmpeg starts listening, so the dial waits that long too.
+;; ffmpeg's own listen timeout is longer, and ends it if phosphene dies first.
+(def ^:private MIC-WAIT-S 60)
+(def ^:private PCM-WAIT-S 5)
 
 (defn start-mic
   "Starts ffmpeg capturing avfoundation audio device dev (an index or name;
@@ -27,9 +37,12 @@
   (let [log (str (os/temp-dir) "/phosphene-mic-" port ".log")
         cmd (str "ffmpeg -nostdin -v error -f avfoundation -i " (audio/shq (str ":" dev))
                  " -ac 1 -ar " audio/SR " -f s16le "
-                 (audio/shq (str "tcp://127.0.0.1:" port "?listen=1"))
+                 (audio/shq (str "tcp://127.0.0.1:" port "?listen=1&listen_timeout="
+                                 (* 1000 (+ MIC-WAIT-S 5))))
                  " >/dev/null 2>" (audio/shq log) " & echo $!")]
     [(string/trim (:out (os/sh "sh" "-c" cmd))) log]))
+
+(defn running? [pid] (zero? (:exit (os/sh "kill" "-0" pid))))
 
 (defn- feed!
   "Appends the little-endian int16 samples in byte-array b to the ring.
@@ -39,7 +52,7 @@
   (let [n (count b)]
     (loop [i 0 lo lo h @head]
       (if (< i n)
-        (let [x (aget b i)]
+        (let [x (bit-and (aget b i) 0xff)]
           (if (neg? lo)
             (recur (inc i) x h)
             (let [v (+ lo (* 256 x))]
@@ -49,11 +62,14 @@
 
 (defn connect
   "Dials the PCM server on port, retrying while it starts up, and reads it
-  into a ring buffer on a future. Returns the source for poll!."
-  [port]
-  (let [conn (loop [i 0]
-               (or (try (net/dial "127.0.0.1" port) (catch e nil))
-                   (when (< i 50) (sleep 100) (recur (inc i)))))]
+  into a ring buffer on a future. With a server pid (--mic), waits as long
+  as that process is alive, up to MIC-WAIT-S. Returns the source for poll!."
+  [port pid]
+  (let [tries (* 10 (if pid MIC-WAIT-S PCM-WAIT-S))
+        conn  (loop [i 0]
+                (or (try (net/dial "127.0.0.1" port) (catch e nil))
+                    (when (and (< i tries) (or (nil? pid) (running? pid)))
+                      (sleep 100) (recur (inc i)))))]
     (when-not conn
       (throw (ex-info (str "no PCM server on port " port) {})))
     (let [ring (double-array RING) head (atom 0) closed (atom false)]
@@ -67,7 +83,8 @@
       {:conn conn :ring ring :head head :closed closed
        :window (double-array fft/N)
        :st (atom {:pos 0 :lp 0.0 :prev 0.0 :avg 0.0 :since 100 :peak (/ TARGET MAX-GAIN)
-                  :rms 0.0 :seen 0 :seen-ms (System/currentTimeMillis)})})))
+                  :rms 0.0 :seen 0 :seen-ms (System/currentTimeMillis)
+                  :sound-ms (System/currentTimeMillis)})})))
 
 (defn disconnect! [src] (try (net/close! (:conn src)) (catch e nil)))
 
@@ -94,6 +111,7 @@
         ;; After a stall (a paused terminal, a slow frame) skip to the last
         ;; second rather than replaying old hops as a burst of beats.
         pos (max (:pos s) (- h audio/SR))
+        now (System/currentTimeMillis)
         [s beat?]
         (loop [pos pos s s beat? false]
           (if (<= (+ pos HOP) h)
@@ -104,10 +122,10 @@
                   hit? (audio/onset? b (:prev s) (:avg s) (:since s))]
               (recur (+ pos HOP)
                      (assoc s :pos (+ pos HOP) :lp lp :prev b :avg (audio/onset-avg (:avg s) b)
-                            :since (if hit? 0 (inc (:since s))) :peak peak :gain g :rms (* g ra))
+                            :since (if hit? 0 (inc (:since s))) :peak peak :gain g :rms (* g ra)
+                            :sound-ms (if (> ra SILENT) now (:sound-ms s)))
                      (or beat? hit?)))
             [s beat?]))
-        now (System/currentTimeMillis)
         s   (if (not= h (:seen s)) (assoc s :seen h :seen-ms now) s)
         g   (or (:gain s) MAX-GAIN)
         n   (alength window)]
@@ -117,5 +135,13 @@
     (reset! st s)
     {:window window :beat? beat? :rms (:rms s)
      :level (/ (:rms s) TARGET)
-     ;; A denied mic permission delivers digital silence, not an error.
-     :stalled (or @closed (> (- now (:seen-ms s)) STALL-MS) (< (:peak s) 1e-4))}))
+     :stalled (or @closed
+                  (> (- now (:seen-ms s)) STALL-MS)
+                  (> (- now (:sound-ms s)) STALL-MS))}))
+
+(defn frame
+  "listen features from the latest live audio, at wall-clock time t."
+  [st src t dt]
+  (let [{:keys [window beat? rms level stalled]} (poll! src)]
+    (assoc (listen/features st window (alength window) t dt beat? rms)
+           :level level :stalled stalled)))

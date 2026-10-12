@@ -8,7 +8,6 @@
 
 (def ESC fb/ESC)
 
-(defn- shq [s] (str "'" (string/replace s "'" "'\\''") "'"))
 (defn- now-ms [] (System/currentTimeMillis))
 (defn- basename [p] (last (string/split p "/")))
 
@@ -113,7 +112,7 @@
 ;; ── Live ─────────────────────────────────────────────────────────────────
 
 (defn- start-player [file]
-  (string/trim (:out (os/sh "sh" "-c" (str "afplay " (shq file) " >/dev/null 2>&1 & echo $!")))))
+  (string/trim (:out (os/sh "sh" "-c" (str "afplay " (audio/shq file) " >/dev/null 2>&1 & echo $!")))))
 
 (defn- signal [pid sig] (when pid (os/sh "kill" (str "-" sig) pid)))
 
@@ -139,7 +138,7 @@
   (let [port (or pcm (os/free-port))
         [pid log] (when mic (live/start-mic mic port))]
     (try
-      [(live/connect port) pid]
+      [(live/connect port pid) pid]
       (catch e
         (signal pid "TERM")
         (println (str "\ncouldn't open " (if mic (str "mic " mic) (str "port " pcm))
@@ -150,7 +149,10 @@
 (defn- live [{:keys [file fps scale mute] :as opts}]
   (let [size (term/size)]
     (when-not size (println "not a terminal; try --dump or --bench") (os/exit 1))
-    (term/write (if file "decoding…" "listening…")) (term/flush)
+    (term/write (cond file "decoding…"
+                      (:mic opts) "listening… (allow microphone access if macOS asks)"
+                      :else "listening…"))
+    (term/flush)
     (let [track  (when file (audio/load file))
           [src mic-pid] (when-not file (open-source opts))
           [cols rows] size
@@ -170,7 +172,7 @@
                   t  (/ (- (or paused-at frame-start) t0) 1000.0)
                   dt (max 0.001 (/ (- frame-start last) 1000.0))
                   a  (if src
-                       (listen/frame-live ls src t dt)
+                       (live/frame ls src t dt)
                        (listen/frame ls track t (if paused-at 0.001 dt)))
                   d  (if paused-at (or (and (:shown d) d) (dir/step d a)) (dir/step d a))
                   f  (:shown d)
@@ -193,7 +195,8 @@
                   (= k "a")   (recur (update d :auto not) ls t0 paused-at frame-start fps-avg)
                   (= k "b")   (recur (dir/toggle-post d :bloom) ls t0 paused-at frame-start fps-avg)
                   (= k "c")   (recur (dir/toggle-post d :cycle) ls t0 paused-at frame-start fps-avg)
-                  (= k " ")
+                  ;; A live source can't be paused, only ignored.
+                  (and (= k " ") track)
                   (if paused-at
                     (do (signal pid "CONT")
                         (recur d ls (+ t0 (- (now-ms) paused-at)) nil frame-start fps-avg))
@@ -216,7 +219,10 @@
 
 (defn -main [& args]
   (let [opts (parse-args args)]
-    (when-not (or (:file opts) (:mic opts) (:pcm opts)) (usage))
+    (case (count (keep opts [:file :mic :pcm]))
+      0 (usage)
+      1 nil
+      (do (println "pick one input: a file, --mic or --pcm") (os/exit 2)))
     (if (and (:file opts) (or (:dump opts) (:bench opts) (:frames opts)))
       (headless opts)
       (live opts))))
