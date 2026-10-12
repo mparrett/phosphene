@@ -15,7 +15,7 @@ Rendered headless from the repo at 192×54 cells. The [dev log](https://phosphen
     bin/phosphene track.mp3 --dump 12.5 frame.ppm --size 160x48
     bin/phosphene track.mp3 --bench 60
 
-Needs `lg` (let-go ≥ 1.13), `ffmpeg`, `perl`, and `afplay` (macOS) for playback.
+Needs `lg` (let-go ≥ 1.13), `ffmpeg`, and `afplay` (macOS) for playback.
 `scripts/mk-test-track.py out.wav` writes a 40 s, 124 BPM test track.
 
 ## Music

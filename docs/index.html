@@ -118,7 +118,7 @@ td.n { font-family: var(--mono); white-space: nowrap; color: var(--phosphor); }
     <p>Everything outside ffmpeg and afplay is let-go running on the bytecode VM. The audio is analysed once on load, then each frame turns features into pixels and pixels into one long escape-sequence string.</p>
   </section>
   <div class="pipe" role="list">
-    <div class="stage" role="listitem"><b>decode</b><small>ffmpeg → mono 22.05 kHz → perl unpack → decimal text → <code>double-array</code></small></div>
+    <div class="stage" role="listitem"><b>decode</b><small>ffmpeg → mono 22.05 kHz s16le → raw bytes → <code>double-array</code></small></div>
     <div class="stage" role="listitem"><b>pre-pass</b><small>one-pole bass filter per 1/60 s hop; onsets where bass jumps 1.35× its trailing mean</small></div>
     <div class="stage" role="listitem"><b>listen</b><small>1024-point FFT per frame → 32 log bands, bass / mid / treb normalised to ≈1.0</small></div>
     <div class="stage hot" role="listitem"><b>director</b><small>scene = effect × preset; switches every 32 beats; seeded crossfade</small></div>
@@ -139,8 +139,8 @@ ESC[48;2;<span class="s">59;42;122</span>m    <span class="c">; bg  deep violet<
     </div>
     <p>The encoder skips a colour code when it matches the cell to its left. It also wraps each frame in mode 2026 (synchronized output), so terminals that support it swap whole frames instead of tearing mid-draw.</p>
 
-    <h3>Why the audio goes through text</h3>
-    <p>The odd step in the decode chain is there because let-go reads files as strings. Raw PCM bytes above <code>0x7f</code> came back as U+FFFD replacement characters, so the samples cross the boundary as one decimal integer per line. Perl's <code>unpack</code> turned out about 3× faster than <code>od</code> for that.</p>
+    <h3>Reading raw PCM</h3>
+    <p>The first version of this log described an odd step here: samples went through Perl's <code>unpack</code> and crossed into let-go as one decimal integer per line, because raw PCM bytes above <code>0x7f</code> seemed to come back as U+FFFD replacement characters. That diagnosis was wrong. let-go reads a file as a string, but the string keeps the raw bytes; only walking it character by character turns the high ones into U+FFFD. <code>(bytes (slurp f))</code> returns the originals, so the decoder now reads ffmpeg's s16le output directly: 0.7 s instead of 3.2 s for the 89-second track (median of three runs, 2026-10-11).</p>
   </section>
 
   <section>
