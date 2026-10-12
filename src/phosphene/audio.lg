@@ -15,13 +15,15 @@
   (str (os/temp-dir) "/phosphene-" (hash path) "-" (System/nanoTime) ".pcm"))
 
 (defn- s16le->doubles!
-  "Kernel: little-endian int16 pairs in b (unsigned byte values) → samples
-  in [-1, 1)."
-  [b ^doubles out]
+  "Kernel: little-endian int16 pairs in b → samples in [-1, 1). lg's byte
+  arrays read back unsigned today; the mask keeps this right if they ever
+  follow Clojure's signed bytes."
+  [^bytes b ^doubles out]
   (let [n (alength out)]
     (loop [i 0]
       (if (< i n)
-        (let [v (+ (aget b (* 2 i)) (* 256 (aget b (inc (* 2 i)))))]
+        (let [j (* 2 i)
+              v (+ (bit-and (aget b j) 0xff) (* 256 (bit-and (aget b (inc j)) 0xff)))]
           (aset out i (/ (double (if (> v 32767) (- v 65536) v)) 32768.0))
           (recur (inc i)))
         out))))
@@ -34,11 +36,13 @@
   (let [out (temp-path path)
         res (os/sh "ffmpeg" "-nostdin" "-v" "error" "-i" path
                    "-ac" "1" "-ar" (str SR) "-f" "s16le" out)]
-    (when-not (zero? (:exit res))
-      (throw (ex-info (str "ffmpeg failed: " (:err res)) {})))
-    (let [b (bytes (slurp out))]
-      (delete-file out)
-      (s16le->doubles! b (double-array (quot (count b) 2))))))
+    (try
+      (when-not (zero? (:exit res))
+        (throw (ex-info (str "ffmpeg failed: " (:err res)) {})))
+      (let [b (bytes (slurp out))]
+        (s16le->doubles! b (double-array (quot (count b) 2))))
+      (finally
+        (when (file-exists? out) (delete-file out))))))
 
 ;; ── Pre-pass ─────────────────────────────────────────────────────────────
 ;; A full-track FFT is too slow on the VM (~6 ms per 1024 points), so the
