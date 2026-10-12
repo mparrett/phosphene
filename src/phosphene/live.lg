@@ -1,0 +1,149 @@
+(ns phosphene.live
+  "Live input: mono s16le PCM at audio/SR read from a localhost TCP socket.
+  lg has no way to spawn a process and read its stdout while it runs (os/sh
+  and os/exec* block until exit), and stdin belongs to the key reader, so
+  the source is a socket: --mic starts ffmpeg as the server, --pcm attaches
+  to any other one."
+  (:require [string] [math] [os] [net]
+            [phosphene.audio :as audio] [phosphene.fft :as fft]
+            [phosphene.listen :as listen]))
+
+(def ^:private RING (* 4 audio/SR))
+(def ^:private HOP (quot audio/SR audio/FPS-HOP))
+
+;; Mic levels vary by tens of dB across rooms and devices, so the hop rms is
+;; normalised against a slow peak to sit where a mastered track does (hop
+;; rms p99 ≈ 0.4, p90 ≈ 0.22 for Sodium / UV, as of 2026-10-11). The gain
+;; cap keeps a quiet room's hiss from being pumped up to full scale.
+(def ^:private TARGET 0.3)
+(def ^:private MAX-GAIN 30.0)
+(def ^:private PEAK-RELEASE-S 10.0)
+(def ^:private STALL-MS 1000)
+;; A mic's noise floor sits far above this; only digital zeros fall below,
+;; which is what a denied mic permission delivers instead of an error.
+(def ^:private SILENT 1e-6)
+
+;; The first --mic run from a new terminal waits on macOS's permission
+;; prompt before ffmpeg starts listening, so the dial waits that long too.
+;; ffmpeg's own listen timeout is longer, and ends it if phosphene dies first.
+(def ^:private MIC-WAIT-S 60)
+(def ^:private PCM-WAIT-S 5)
+
+(defn start-mic
+  "Starts ffmpeg capturing avfoundation audio device dev (an index or name;
+  \"default\" is the system input) as a PCM server on port. Returns
+  [pid log-path]; ffmpeg's stderr goes to the log."
+  [dev port]
+  (let [log (str (os/temp-dir) "/phosphene-mic-" port ".log")
+        cmd (str "ffmpeg -nostdin -v error -f avfoundation -i " (audio/shq (str ":" dev))
+                 " -ac 1 -ar " audio/SR " -f s16le "
+                 (audio/shq (str "tcp://127.0.0.1:" port "?listen=1&listen_timeout="
+                                 (* 1000 (+ MIC-WAIT-S 5))))
+                 " >/dev/null 2>" (audio/shq log) " & echo $!")]
+    [(string/trim (:out (os/sh "sh" "-c" cmd))) log]))
+
+(defn running? [pid] (zero? (:exit (os/sh "kill" "-0" pid))))
+
+(defn- feed!
+  "Appends the little-endian int16 samples in byte-array b to the ring.
+  lo is the low byte of a sample split across reads, or -1; returns the
+  same for the next read."
+  [^doubles ring head b lo]
+  (let [n (count b)]
+    (loop [i 0 lo lo h @head]
+      (if (< i n)
+        (let [x (bit-and (aget b i) 0xff)]
+          (if (neg? lo)
+            (recur (inc i) x h)
+            (let [v (+ lo (* 256 x))]
+              (aset ring (mod h RING) (/ (double (if (> v 32767) (- v 65536) v)) 32768.0))
+              (recur (inc i) -1 (inc h)))))
+        (do (reset! head h) lo)))))
+
+(defn connect
+  "Dials the PCM server on port, retrying while it starts up, and reads it
+  into a ring buffer on a future. With a server pid (--mic), waits as long
+  as that process is alive, up to MIC-WAIT-S. Returns the source for poll!."
+  [port pid]
+  (let [tries (* 10 (if pid MIC-WAIT-S PCM-WAIT-S))
+        conn  (loop [i 0]
+                (or (try (net/dial "127.0.0.1" port) (catch e nil))
+                    (when (and (< i tries) (or (nil? pid) (running? pid)))
+                      (sleep 100) (recur (inc i)))))]
+    (when-not conn
+      (throw (ex-info (str "no PCM server on port " port) {})))
+    (let [ring (double-array RING) head (atom 0) closed (atom false)]
+      (future
+        (try
+          (loop [lo -1]
+            (when-let [b (net/read! conn 4096)]
+              (recur (feed! ring head b lo))))
+          (catch e nil))
+        (reset! closed true))
+      {:conn conn :ring ring :head head :closed closed
+       :window (double-array fft/N)
+       :st (atom {:pos 0 :lp 0.0 :prev 0.0 :avg 0.0 :since 100 :peak (/ TARGET MAX-GAIN)
+                  :rms 0.0 :seen 0 :seen-ms (System/currentTimeMillis)
+                  :sound-ms (System/currentTimeMillis)})})))
+
+(defn disconnect! [src] (try (net/close! (:conn src)) (catch e nil)))
+
+(defn- hop-levels
+  "Kernel: [rms bass-rms lp'] over ring samples [s0, s0+HOP), with the
+  150 Hz one-pole that audio/analyze uses for bass."
+  [^doubles ring s0 ^double lp ^double k]
+  (loop [i 0 lp lp sa 0.0 sb 0.0]
+    (if (< i HOP)
+      (let [x (aget ring (mod (+ s0 i) RING)) lp (+ lp (* k (- x lp)))]
+        (recur (inc i) lp (+ sa (* x x)) (+ sb (* lp lp))))
+      [(math/sqrt (/ sa HOP)) (math/sqrt (/ sb HOP)) lp])))
+
+(def ^:private k-bass (- 1.0 (math/exp (/ (* -2.0 math/PI 150.0) audio/SR))))
+(def ^:private k-peak (math/exp (/ (- (/ (double HOP) audio/SR)) PEAK-RELEASE-S)))
+
+(defn poll!
+  "Runs onset detection over the hops that arrived since the last call and
+  fills the window with the latest fft/N samples, gain-normalised. Returns
+  {:window :beat? :rms :level :stalled}."
+  [{:keys [ring head closed window st]}]
+  (let [h   @head
+        s   @st
+        ;; After a stall (a paused terminal, a slow frame) skip to the last
+        ;; second rather than replaying old hops as a burst of beats.
+        pos (max (:pos s) (- h audio/SR))
+        now (System/currentTimeMillis)
+        [s beat?]
+        (loop [pos pos s s beat? false]
+          (if (<= (+ pos HOP) h)
+            (let [[ra rb lp] (hop-levels ring pos (:lp s) k-bass)
+                  peak (max ra (* k-peak (:peak s)))
+                  g    (min MAX-GAIN (/ TARGET (max peak 1e-6)))
+                  b    (* g rb)
+                  hit? (audio/onset? b (:prev s) (:avg s) (:since s))]
+              (recur (+ pos HOP)
+                     (assoc s :pos (+ pos HOP) :lp lp :prev b :avg (audio/onset-avg (:avg s) b)
+                            :since (if hit? 0 (inc (:since s))) :peak peak :gain g :rms (* g ra)
+                            :sound-ms (if (> ra SILENT) now (:sound-ms s)))
+                     (or beat? hit?)))
+            [s beat?]))
+        s   (if (not= h (:seen s)) (assoc s :seen h :seen-ms now) s)
+        ;; With no new samples the ring holds the last sound forever, so a
+        ;; lost source reads as silence rather than a frozen picture.
+        lost (or @closed (> (- now (:seen-ms s)) STALL-MS))
+        g   (if lost 0.0 (or (:gain s) MAX-GAIN))
+        rms (if lost 0.0 (:rms s))
+        n   (alength window)]
+    (dotimes [i n]
+      (let [j (+ (- h n) i)]
+        (aset window i (if (neg? j) 0.0 (* g (aget ring (mod j RING)))))))
+    (reset! st s)
+    {:window window :beat? beat? :rms rms
+     :level (/ rms TARGET)
+     :stalled (or lost (> (- now (:sound-ms s)) STALL-MS))}))
+
+(defn frame
+  "listen features from the latest live audio, at wall-clock time t."
+  [st src t dt]
+  (let [{:keys [window beat? rms level stalled]} (poll! src)]
+    (assoc (listen/features st window (alength window) t dt beat? rms)
+           :level level :stalled stalled)))

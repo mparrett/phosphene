@@ -7,7 +7,7 @@
 
 (def SR 22050)
 
-(defn- shq [s] (str "'" (string/replace s "'" "'\\''") "'"))
+(defn shq [s] (str "'" (string/replace s "'" "'\\''") "'"))
 
 (defn- temp-path
   "Unique per run: concurrent decodes of the same file must not share it."
@@ -44,6 +44,18 @@
       (finally
         (when (file-exists? out) (delete-file out))))))
 
+;; Onset: bass rises above 1.35× its trailing ~0.5 s mean, with a
+;; refractory gap so one kick doesn't fire on consecutive hops. Shared with
+;; phosphene.live, which applies it hop by hop as audio arrives.
+
+(defn onset?
+  "b and prev are this hop's and the last hop's bass level; since counts
+  hops since the previous onset."
+  [b prev avg since]
+  (and (> b (* 1.35 avg)) (> b prev) (> b 0.02) (> since 12)))
+
+(defn onset-avg [avg b] (+ avg (* 0.06 (- b avg))))
+
 ;; ── Pre-pass ─────────────────────────────────────────────────────────────
 ;; A full-track FFT is too slow on the VM (~6 ms per 1024 points), so the
 ;; pre-pass uses one-pole filters for bass energy and loudness per hop, which
@@ -72,15 +84,12 @@
           (aset rms f (math/sqrt (/ sa m)))
           (aset bass f (math/sqrt (/ sb m)))
           (recur (inc f) lp))))
-    ;; Onset: bass rises above 1.35× its trailing ~0.5 s mean, with a
-    ;; refractory gap so one kick doesn't fire on consecutive hops.
     (loop [f 1 avg 0.0 last -100]
       (when (< f nf)
         (let [b    (aget bass f)
-              flux (- b (aget bass (dec f)))
-              hit? (and (> b (* 1.35 avg)) (pos? flux) (> b 0.02) (> (- f last) 12))]
+              hit? (onset? b (aget bass (dec f)) avg (- f last))]
           (when hit? (aset onset f 1.0))
-          (recur (inc f) (+ avg (* 0.06 (- b avg))) (if hit? f last)))))
+          (recur (inc f) (onset-avg avg b) (if hit? f last)))))
     {:samples samples :n n :hop hop :frames nf :rms rms :bass bass :onset onset
      :duration (/ (double n) SR)}))
 

@@ -38,14 +38,13 @@
 
 (defn- rel [x avg] (if (> avg 1e-6) (/ x avg) 0.0))
 
-(defn frame
-  "Features at time t (s). dt is the time since the previous call, used for
-  smoothing that stays frame-rate independent."
-  [st track t dt]
+(defn features
+  "Features from the samples ending at index end. dt is the time since the
+  previous call, used for smoothing that stays frame-rate independent; beat?
+  and rms come from the caller's onset detection."
+  [st samples end t dt beat? rms]
   (let [s       @st
-        samples (:samples track)
-        n       (:n track)
-        end     (min n (int (* t audio/SR)))
+        n       (alength samples)
         mags    (fft/magnitudes samples end)
         bass    (energy mags (bin 20) (bin 250))
         mid     (energy mags (bin 250) (bin 2000))
@@ -60,14 +59,7 @@
         bands (:bands s) peaks (:peaks s)
         kb (- 1.0 (math/exp (/ (- dt) 0.08)))
         kp (math/exp (/ (- dt) 0.6))
-        wave (double-array WAVE)
-        f    (int (* t audio/FPS-HOP))
-        ;; Any pre-detected onset since the last frame counts as a beat.
-        f0   (max 0 (int (* (- t dt) audio/FPS-HOP)))
-        beat? (loop [i (inc f0)]
-                (cond (> i (min f (dec (:frames track)))) false
-                      (pos? (aget (:onset track) i)) true
-                      :else (recur (inc i))))]
+        wave (double-array WAVE)]
     (dotimes [i NBANDS]
       (let [e (energy mags (nth edges i) (nth edges (inc i)))
             v (min 1.0 (* 0.55 (math/log (+ 1.0 (* 12.0 e)))))
@@ -88,7 +80,20 @@
       {:t t :dt dt
        :bass b :mid m :treb tr :bass-att batt :mid-att matt :treb-att tatt
        :vol (/ (+ b m tr) 3.0)
-       :rms (if (< f (:frames track)) (aget (:rms track) f) 0.0)
+       :rms rms
        :beat beat? :beat-env benv :beats beats
-       :next-beat (audio/next-beat track t)
        :bands bands :peaks peaks :wave wave :spectrum mags})))
+
+(defn frame
+  "Features at time t (s) into a decoded track."
+  [st track t dt]
+  (let [f  (int (* t audio/FPS-HOP))
+        ;; Any pre-detected onset since the last frame counts as a beat.
+        f0 (max 0 (int (* (- t dt) audio/FPS-HOP)))
+        beat? (loop [i (inc f0)]
+                (cond (> i (min f (dec (:frames track)))) false
+                      (pos? (aget (:onset track) i)) true
+                      :else (recur (inc i))))
+        rms (if (< f (:frames track)) (aget (:rms track) f) 0.0)]
+    (assoc (features st (:samples track) (min (:n track) (int (* t audio/SR))) t dt beat? rms)
+           :next-beat (audio/next-beat track t))))

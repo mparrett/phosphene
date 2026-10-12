@@ -1,18 +1,20 @@
 (ns phosphene.main
   (:require [string] [math] [os] [term]
             [phosphene.audio :as audio]
+            [phosphene.live :as live]
             [phosphene.listen :as listen]
             [phosphene.fb :as fb]
             [phosphene.director :as dir]))
 
 (def ESC fb/ESC)
 
-(defn- shq [s] (str "'" (string/replace s "'" "'\\''") "'"))
 (defn- now-ms [] (System/currentTimeMillis))
 (defn- basename [p] (last (string/split p "/")))
 
 (defn- usage []
   (println "usage: phosphene <audio-file> [--fx NAME [--preset N]] [--fps N] [--scale N] [--mute] [--no-post]")
+  (println "       phosphene --mic [DEVICE] [--fx NAME [--preset N]] [--fps N] [--scale N] [--no-post]")
+  (println "       phosphene --pcm PORT [...]   s16le mono 22050 Hz from a TCP server on localhost")
   (println "       phosphene <audio-file> --dump SECONDS OUT.ppm [--size WxH] [--warm S] [--fx NAME]")
   (println "       phosphene <audio-file> --frames START SECONDS OUT-DIR [--size WxH] [--warm S]")
   (println "       phosphene <audio-file> --bench FRAMES [--size WxH] [--fx NAME]")
@@ -28,6 +30,10 @@
         "--preset" (recur (rest more) (assoc opts :preset (parse-int (first more))))
         "--warm"   (recur (rest more) (assoc opts :warm (parse-double (first more))))
         "--mute"   (recur more (assoc opts :mute true))
+        "--mic"    (if (and (seq more) (not (string/starts-with? (first more) "--")))
+                     (recur (rest more) (assoc opts :mic (first more)))
+                     (recur more (assoc opts :mic "default")))
+        "--pcm"    (recur (rest more) (assoc opts :pcm (parse-int (first more))))
         "--no-post" (recur more (assoc opts :no-post true))
         "--fps"    (recur (rest more) (assoc opts :fps (parse-int (first more))))
         "--size"   (recur (rest more) (assoc opts :size (mapv parse-int (string/split (first more) "x"))))
@@ -106,7 +112,7 @@
 ;; ── Live ─────────────────────────────────────────────────────────────────
 
 (defn- start-player [file]
-  (string/trim (:out (os/sh "sh" "-c" (str "afplay " (shq file) " >/dev/null 2>&1 & echo $!")))))
+  (string/trim (:out (os/sh "sh" "-c" (str "afplay " (audio/shq file) " >/dev/null 2>&1 & echo $!")))))
 
 (defn- signal [pid sig] (when pid (os/sh "kill" (str "-" sig) pid)))
 
@@ -115,20 +121,40 @@
         meter (fn [v] (let [n (max 0 (min 8 (int (* 4 v))))]
                         (str (apply str (repeat n "▮")) (apply str (repeat (- 8 n) "·")))))
         beat (if (> (:beat-env a) 0.5) (str ESC "[38;2;255;80;200m●") (str ESC "[38;2;70;60;90m○"))
-        left (str " ◆ phosphene  " name (if auto "  ⟳" "") "  " (mm t) "/" (mm dur)
+        left (str " ◆ phosphene  " name (if auto "  ⟳" "") "  "
+                  (if dur (str (mm t) "/" (mm dur)) (str (mm t) (if (:stalled a) "  no signal" "  live")))
                   (if paused "  ⏸" ""))
-        right (str "bass " (meter (:bass-att a)) " mid " (meter (:mid-att a))
+        right (str (if (:level a) (str "in " (meter (* 2 (:level a))) " ") "")
+                   "bass " (meter (:bass-att a)) " mid " (meter (:mid-att a))
                    " treb " (meter (:treb-att a)) "  " (format "%2d fps " (int fps)))
         pad (max 1 (- cols (count left) (count right) 2))]
     (str ESC "[" row ";1H" ESC "[48;2;12;8;20m" ESC "[38;2;150;140;190m"
          left (apply str (repeat pad " ")) beat " " ESC "[38;2;150;140;190m" right
          ESC "[K" ESC "[0m")))
 
+(defn- open-source
+  "For --mic/--pcm: the live source and the ffmpeg pid to stop on exit."
+  [{:keys [mic pcm]}]
+  (let [port (or pcm (os/free-port))
+        [pid log] (when mic (live/start-mic mic port))]
+    (try
+      [(live/connect port pid) pid]
+      (catch e
+        (signal pid "TERM")
+        (println (str "\ncouldn't open " (if mic (str "mic " mic) (str "port " pcm))
+                      (when (and log (file-exists? log)) (str ": " (string/trim (slurp log))))))
+        (when mic (println "devices: ffmpeg -f avfoundation -list_devices true -i ''"))
+        (os/exit 1)))))
+
 (defn- live [{:keys [file fps scale mute] :as opts}]
   (let [size (term/size)]
     (when-not size (println "not a terminal; try --dump or --bench") (os/exit 1))
-    (term/write "decoding…") (term/flush)
-    (let [track  (audio/load file)
+    (term/write (cond file "decoding…"
+                      (:mic opts) "listening… (allow microphone access if macOS asks)"
+                      :else "listening…"))
+    (term/flush)
+    (let [track  (when file (audio/load file))
+          [src mic-pid] (when-not file (open-source opts))
           [cols rows] size
           target (/ 1000.0 (or fps 30))
           right  (str ESC "[C") left (str ESC "[D")]
@@ -136,7 +162,7 @@
       (term/alternate-screen)
       (term/hide-cursor)
       (term/clear)
-      (let [pid (when-not mute (start-player file))]
+      (let [pid (when (and file (not mute)) (start-player file))]
         (try
           (loop [d (director (screen-fb cols (dec rows) (or scale 2)) opts)
                  ls (listen/make-state)
@@ -145,7 +171,9 @@
             (let [frame-start (now-ms)
                   t  (/ (- (or paused-at frame-start) t0) 1000.0)
                   dt (max 0.001 (/ (- frame-start last) 1000.0))
-                  a  (listen/frame ls track t (if paused-at 0.001 dt))
+                  a  (if src
+                       (live/frame ls src t dt)
+                       (listen/frame ls track t (if paused-at 0.001 dt)))
                   d  (if paused-at (or (and (:shown d) d) (dir/step d a)) (dir/step d a))
                   f  (:shown d)
                   [c r] (or (term/size) [cols rows])]
@@ -157,7 +185,7 @@
                     resized (or (not= c (:cols f)) (not= (dec r) (:rows f)))]
                 (cond
                   (or (= k "q") (= k (str (char 3))) (= k ESC)
-                      (> t (+ 0.5 (:duration track)))) nil
+                      (and track (> t (+ 0.5 (:duration track))))) nil
                   resized
                   (let [nd (dir/make (screen-fb c (dec r) (or scale 2)) (:i (:cur d)) (:auto d) (some? (:post d)))]
                     (term/clear)
@@ -167,7 +195,8 @@
                   (= k "a")   (recur (update d :auto not) ls t0 paused-at frame-start fps-avg)
                   (= k "b")   (recur (dir/toggle-post d :bloom) ls t0 paused-at frame-start fps-avg)
                   (= k "c")   (recur (dir/toggle-post d :cycle) ls t0 paused-at frame-start fps-avg)
-                  (= k " ")
+                  ;; A live source can't be paused, only ignored.
+                  (and (= k " ") track)
                   (if paused-at
                     (do (signal pid "CONT")
                         (recur d ls (+ t0 (- (now-ms) paused-at)) nil frame-start fps-avg))
@@ -181,6 +210,8 @@
           (finally
             (signal pid "CONT")
             (signal pid "TERM")
+            (when src (live/disconnect! src))
+            (signal mic-pid "TERM")
             (term/show-cursor)
             (term/main-screen)
             (term/reset-style)
@@ -188,8 +219,11 @@
 
 (defn -main [& args]
   (let [opts (parse-args args)]
-    (when-not (:file opts) (usage))
-    (if (or (:dump opts) (:bench opts) (:frames opts))
+    (case (count (keep opts [:file :mic :pcm]))
+      0 (usage)
+      1 nil
+      (do (println "pick one input: a file, --mic or --pcm") (os/exit 2)))
+    (if (and (:file opts) (or (:dump opts) (:bench opts) (:frames opts)))
       (headless opts)
       (live opts))))
 
