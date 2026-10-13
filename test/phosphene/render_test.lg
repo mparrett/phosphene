@@ -1,0 +1,42 @@
+(ns phosphene.render-test
+  "Headless frames, one per engine, against stored references. Go fuses
+  multiply-adds on arm64 but not amd64, so frames can differ in the last bit
+  across machines; the comparison allows a few off-by-a-little channel values
+  rather than requiring identical output. PHOSPHENE_UPDATE_REF=1 rewrites
+  the references."
+  (:require [clojure.test :refer [deftest is testing]] [string] [os]
+            [phosphene.fixtures :as fx]))
+
+(def ^:private NEAR 8)
+(def ^:private MAX-FAR 0.005)
+
+(defn- ref-path [fx] (str "test/fixtures/render-" fx ".ppm"))
+
+;; A subprocess, since main.lg runs on load. PHOSPHENE_SRC points it at
+;; another source tree, so the render is of the code under test.
+(defn- dump [fx out]
+  (let [src (or (not-empty (os/getenv "PHOSPHENE_SRC")) "src")
+        res (os/sh "lg" "-source-paths" src (str src "/phosphene/main.lg")
+                   (fx/kicks-wav) "--dump" "3.0" out "--size" "80x24" "--fx" fx)]
+    (when-not (zero? (:exit res))
+      (throw (ex-info (str "dump failed: " (:out res) (:err res)) {})))))
+
+(defn- ppm
+  "[width height values] of an ASCII (P3) PPM."
+  [path]
+  (let [[_ w h _ & vs] (string/split (string/trim (slurp path)) #"\s+")]
+    [(parse-long w) (parse-long h) (mapv parse-long vs)]))
+
+(deftest frames-match-references
+  (doseq [fx ["plasma" "milk" "superscope"]]
+    (testing fx
+      (let [out (str (os/temp-dir) "/phosphene-test-" fx ".ppm")]
+        (dump fx out)
+        (if (= "1" (os/getenv "PHOSPHENE_UPDATE_REF"))
+          (do (os/sh "cp" out (ref-path fx)) (println "wrote" (ref-path fx)))
+          (let [[w1 h1 v1] (ppm (ref-path fx)) [w2 h2 v2] (ppm out)
+                far (count (filter #(> % NEAR) (map #(abs (- %1 %2)) v1 v2)))]
+            (is (= [w1 h1 (count v1)] [w2 h2 (count v2)]) "same size")
+            (is (<= (/ (double far) (max 1 (count v1))) MAX-FAR)
+                (str far " of " (count v1) " channel values differ by more than " NEAR))))
+        (delete-file out)))))

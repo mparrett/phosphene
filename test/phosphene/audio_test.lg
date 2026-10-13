@@ -1,0 +1,41 @@
+(ns phosphene.audio-test
+  (:require [clojure.test :refer [deftest is testing]] [os]
+            [phosphene.audio :as audio] [phosphene.fixtures :as fx]))
+
+(deftest decode-is-exact
+  (let [s (audio/decode (fx/ramp-wav))]
+    (is (= (* 3 audio/SR) (alength s)))
+    (is (every? #(= (aget s %) (/ (double (- (mod % 65536) 32768)) 32768.0))
+                (range (alength s)))
+        "every int16 value maps to v/32768")))
+
+(deftest decode-odd-paths
+  (testing "spaces and quotes reach ffmpeg as one argument"
+    (let [odd (str (os/temp-dir) "/phosphene test 'quoted'.wav")]
+      (spit odd (slurp (fx/ramp-wav)))
+      (try
+        (is (= (* 3 audio/SR) (alength (audio/decode odd))))
+        (finally (delete-file odd)))))
+  (testing "a missing file and a non-audio file are rejected"
+    (is (thrown? Exception (audio/decode "/no/such/file.wav")))
+    (let [junk (str (os/temp-dir) "/phosphene-test-junk.wav")]
+      (spit junk "not audio")
+      (try
+        (is (thrown? Exception (audio/decode junk)))
+        (finally (delete-file junk))))))
+
+(deftest onsets-follow-kicks
+  ;; The first kick has no history to rise above, so detection starts at
+  ;; the second.
+  (let [tr (audio/load (fx/kicks-wav))
+        hits (keep-indexed (fn [i v] (when (pos? v) i)) (seq (:onset tr)))
+        want (map #(int (* % fx/KICK-PERIOD audio/FPS-HOP)) (range 1 16))]
+    (is (= (count want) (count hits)))
+    (is (every? true? (map #(<= (abs (- %1 %2)) 1) hits want))
+        "each onset within a hop of its kick")))
+
+(deftest no-onsets-in-a-steady-tone
+  ;; The trailing mean starts at zero, so the attack can fire while it
+  ;; catches up; only the settled part counts.
+  (let [tr (audio/load (fx/tone-wav))]
+    (is (zero? (count (filter pos? (drop (quot audio/FPS-HOP 2) (seq (:onset tr)))))))))
