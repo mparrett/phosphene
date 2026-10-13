@@ -10,19 +10,20 @@
         "every int16 value maps to v/32768")))
 
 (deftest decode-odd-paths
-  (testing "spaces and quotes reach ffmpeg as one argument"
-    (let [odd (str (os/temp-dir) "/phosphene test 'quoted'.wav")]
+  (testing "a path with spaces and quotes decodes"
+    (let [odd (fx/path "a b 'quoted'.wav")]
       (spit odd (slurp (fx/ramp-wav)))
-      (try
-        (is (= (* 3 audio/SR) (alength (audio/decode odd))))
-        (finally (delete-file odd)))))
+      (is (= (* 3 audio/SR) (alength (audio/decode odd))))))
   (testing "a missing file and a non-audio file are rejected"
     (is (thrown? Exception (audio/decode "/no/such/file.wav")))
-    (let [junk (str (os/temp-dir) "/phosphene-test-junk.wav")]
+    (let [junk (fx/path "junk.wav")]
       (spit junk "not audio")
-      (try
-        (is (thrown? Exception (audio/decode junk)))
-        (finally (delete-file junk))))))
+      (is (thrown? Exception (audio/decode junk))))))
+
+(deftest shq-survives-the-shell
+  ;; start-mic and playback build sh -c command lines with shq.
+  (doseq [s ["plain" "a b" "it's" "'" "$HOME `x` \"q\" \\" ""]]
+    (is (= s (:out (os/sh "sh" "-c" (str "printf %s " (audio/shq s))))) s)))
 
 (deftest onsets-follow-kicks
   ;; The first kick has no history to rise above, so detection starts at

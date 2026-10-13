@@ -1,13 +1,23 @@
 (ns phosphene.fixtures
   "Generated test audio, so the tests carry no binary fixtures but the
-  reference frame."
+  reference frames. Everything goes in one directory per run, so concurrent
+  runs don't share files; cleanup! removes it."
   (:require [os] [math] [phosphene.audio :as audio]))
 
 (def KICK-PERIOD 0.5)
 
+(def dir
+  (delay (let [d (str (os/temp-dir) "/phosphene-test-" (System/nanoTime))]
+           (os/sh "mkdir" "-p" d)
+           d)))
+
+(defn path [name] (str @dir "/" name))
+
+(defn cleanup! [] (when (realized? dir) (os/sh "rm" "-rf" @dir)))
+
 (defn- gen [name expr secs]
-  (let [out (str (os/temp-dir) "/phosphene-test-" name ".wav")
-        res (os/sh "ffmpeg" "-nostdin" "-v" "error" "-y" "-f" "lavfi"
+  (let [out (path (str name ".wav"))
+        res (os/sh "ffmpeg" "-nostdin" "-v" "error" "-f" "lavfi"
                    "-i" (str "aevalsrc='" expr "':s=" audio/SR ":d=" secs)
                    "-c:a" "pcm_s16le" out)]
     (when-not (zero? (:exit res))
@@ -15,16 +25,16 @@
     out))
 
 ;; Every int16 value in order, so decoding can be checked exactly.
-(defn ramp-wav [] (gen "ramp" "(mod(n,65536)-32768)/32768" 3))
+(def ramp-wav (memoize #(gen "ramp" "(mod(n,65536)-32768)/32768" 3)))
 
 ;; A 55 Hz kick every KICK-PERIOD seconds.
 (def ^:private kick
   (str "0.8*sin(2*PI*55*mod(t," KICK-PERIOD "))*exp(-12*mod(t," KICK-PERIOD "))"))
 
-(defn kicks-wav [] (gen "kicks" kick 8))
+(def kicks-wav (memoize #(gen "kicks" kick 8)))
 
 ;; A steady bass tone: loud, but nothing for onsets to fire on.
-(defn tone-wav [] (gen "tone" "0.6*sin(2*PI*80*t)" 4))
+(def tone-wav (memoize #(gen "tone" "0.6*sin(2*PI*80*t)" 4)))
 
 (defn kick-sample
   "The same kick as kicks-wav, at sample index i."

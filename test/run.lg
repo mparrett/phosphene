@@ -1,9 +1,10 @@
 (ns run
   "Runs every test namespace; exits nonzero on any failure, which
   clojure.test's run-tests alone doesn't."
-  (:require [clojure.test :as t] [os]
+  (:require [clojure.test :as t] [os] [phosphene.fixtures :as fx]
             [phosphene.audio-test] [phosphene.live-test] [phosphene.render-test]))
 
-(let [{:keys [fail error]} (t/run-tests 'phosphene.audio-test 'phosphene.live-test
-                                        'phosphene.render-test)]
+(let [{:keys [fail error]} (try (t/run-tests 'phosphene.audio-test 'phosphene.live-test
+                                             'phosphene.render-test)
+                                (finally (fx/cleanup!)))]
   (os/exit (if (zero? (+ fail error)) 0 1)))

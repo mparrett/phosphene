@@ -14,103 +14,110 @@
         (aset b (inc (* 2 i)) (bit-and (bit-shift-right v 8) 0xff))))
     b))
 
-(defn- server
-  "Listens on a free port and, once dialled, writes bytes in chunks of
-  chunk-size (odd, so samples straddle reads). Closes after unless keep-open?.
-  Returns [port done], where done is a future of the open connection."
-  [b chunk-size keep-open?]
+(defn- write-chunked!
+  "Writes b in chunks of chunk-size; an odd size makes samples straddle reads."
+  [c b chunk-size]
+  (let [n (alength b)]
+    (loop [i 0]
+      (when (< i n)
+        (let [m (min chunk-size (- n i)) part (byte-array m)]
+          (dotimes [k m] (aset part k (aget b (+ i k))))
+          (net/write! c part)
+          (sleep 2)
+          (recur (+ i m)))))))
+
+(defn- with-source
+  "Runs (f src c) with src connected to a fresh server whose accepted
+  connection c has already been sent b. Closes everything afterwards."
+  [b f]
   (let [srv  (net/listen "127.0.0.1" 0)
-        port (:port (net/local-address srv))
-        done (future
-               (let [c (net/accept srv) n (alength b)]
-                 (loop [i 0]
-                   (when (< i n)
-                     (let [m (min chunk-size (- n i)) part (byte-array m)]
-                       (dotimes [k m] (aset part k (aget b (+ i k))))
-                       (net/write! c part)
-                       (sleep 2)
-                       (recur (+ i m)))))
-                 (when-not keep-open? (net/close! c))
-                 c))]
-    [port done]))
+        conn (future (let [c (net/accept srv)] (write-chunked! c b 4097) c))
+        src  (live/connect (:port (net/local-address srv)) nil)
+        c    @conn]
+    (try (f src c)
+         (finally
+           (doseq [x [c srv]] (try (net/close! x) (catch e nil)))
+           (live/disconnect! src)))))
 
 (defn- wait-for [pred]
   (loop [i 0] (cond (pred) true (< i 300) (do (sleep 10) (recur (inc i))) :else false)))
+
+(defn- head= [src n] #(= n @(:head src)))
 
 (defn- tone [n hz amp]
   (map #(* amp (math/sin (/ (* 2 math/PI hz %) audio/SR))) (range n)))
 
 (deftest samples-arrive-intact
-  (let [xs (vec (tone audio/SR 100.0 0.3))
-        [port done] (server (s16le xs) 4097 false)
-        src (live/connect port nil)]
-    (try
-      (is (wait-for #(deref (:closed src))))
-      (is (= (count xs) @(:head src)))
-      (is (every? #(< (abs (- (aget (:ring src) %) (nth xs %))) (/ 1.0 32768)) (range (count xs)))
-          "each sample within one LSB, across split reads")
-      (finally @done (live/disconnect! src)))))
+  (let [xs (vec (tone audio/SR 100.0 0.3))]
+    (with-source (s16le xs)
+      (fn [src c]
+        (is (wait-for (head= src (count xs))))
+        (is (every? #(< (abs (- (aget (:ring src) %) (nth xs %))) (/ 1.0 32768))
+                    (range (count xs)))
+            "each sample within one LSB, across split reads")))))
 
 (deftest lost-source-reads-as-silence
   (testing "closed"
-    (let [[port done] (server (s16le (tone audio/SR 100.0 0.3)) 4096 false)
-          src (live/connect port nil)]
-      (try
-        (wait-for #(deref (:closed src)))
+    (with-source (s16le (tone audio/SR 100.0 0.3))
+      (fn [src c]
+        (net/close! c)
+        (is (wait-for #(deref (:closed src))))
         (let [p (live/poll! src)]
           (is (:stalled p))
           (is (zero? (:level p)))
-          (is (every? zero? (seq (:window p)))))
-        (finally @done (live/disconnect! src)))))
+          (is (every? zero? (seq (:window p))))))))
   (testing "open but quiet past the stall timeout, then resuming"
-    (let [[port done] (server (s16le (tone audio/SR 100.0 0.3)) 4096 true)
-          src (live/connect port nil)]
-      (try
-        (let [c @done]
-          (wait-for #(= audio/SR @(:head src)))
-          (let [p (live/poll! src)]
-            (is (not (:stalled p)))
-            (is (< 0.5 (:level p))))
-          (sleep 1100)
-          (let [p (live/poll! src)]
-            (is (:stalled p))
-            (is (zero? (:level p))))
-          (net/write! c (s16le (tone (quot audio/SR 10) 100.0 0.3)))
-          (wait-for #(< audio/SR @(:head src)))
-          (is (< 0.5 (:level (live/poll! src))) "level returns with new samples")
-          (net/close! c))
-        (finally (live/disconnect! src))))))
+    (with-source (s16le (tone audio/SR 100.0 0.3))
+      (fn [src c]
+        (is (wait-for (head= src audio/SR)))
+        (let [p (live/poll! src)]
+          (is (not (:stalled p)))
+          (is (< 0.5 (:level p))))
+        (sleep 1100)
+        (let [p (live/poll! src)]
+          (is (:stalled p))
+          (is (zero? (:level p))))
+        ;; Quieter than before, so a level carried over from the first
+        ;; second would show as the wrong value.
+        (let [more (quot audio/SR 5)]
+          (net/write! c (s16le (tone more 100.0 0.15)))
+          (is (wait-for (head= src (+ audio/SR more)))))
+        (let [p (live/poll! src)]
+          (is (not (:stalled p)))
+          (is (< 0.25 (:level p) 0.75) "level tracks the new, quieter samples"))))))
 
 (deftest digital-silence-is-no-signal
   ;; A denied mic sends zeros rather than failing.
-  (let [[port done] (server (s16le (repeat (* 2 audio/SR) 0.0)) 4096 true)
-        src (live/connect port nil)]
-    (try
-      (let [c @done]
-        (wait-for #(= (* 2 audio/SR) @(:head src)))
-        (sleep 1100)
-        (is (:stalled (live/poll! src)))
-        (net/close! c))
-      (finally (live/disconnect! src)))))
+  (with-source (s16le (repeat (* 2 audio/SR) 0.0))
+    (fn [src c]
+      (is (wait-for (head= src (* 2 audio/SR))))
+      (sleep 1100)
+      (is (:stalled (live/poll! src))))))
 
 (deftest gain-is-capped
-  ;; A -80 dB signal stands in for room hiss.
-  (let [[port done] (server (s16le (tone audio/SR 100.0 1e-4)) 4096 false)
-        src (live/connect port nil)]
-    (try
-      (wait-for #(deref (:closed src)))
-      (live/poll! src)
-      (is (<= (:gain @(:st src)) 30.0))
-      (is (< (:rms @(:st src)) 0.01) "hiss stays far below the 0.3 target")
-      (finally @done (live/disconnect! src)))))
+  ;; -80 dB stands in for room hiss. The peak releases over seconds, so
+  ;; without the cap the gain would pass it partway through.
+  (let [step (quot audio/SR 2)]
+    (with-source (byte-array 0)
+      (fn [src c]
+        (dotimes [i 8]
+          (net/write! c (s16le (tone step 100.0 1e-4)))
+          (is (wait-for (head= src (* (inc i) step))))
+          (live/poll! src))
+        (is (= 30.0 (:gain @(:st src))) "gain sits at the cap")
+        (is (< (:rms @(:st src)) 0.01) "hiss stays far below the 0.3 target")))))
 
 (deftest streamed-kicks-trigger-beats
-  (let [n (* 2 audio/SR)
-        [port done] (server (s16le (map fx/kick-sample (range n))) 4096 true)
-        src (live/connect port nil)]
-    (try
-      (let [c @done]
-        (wait-for #(= n @(:head src)))
-        (is (:beat? (live/poll! src)))
-        (net/close! c))
-      (finally (live/disconnect! src)))))
+  ;; The first poll fires on any sound against the fresh onset state, so the
+  ;; source settles on a steady tone before the kicks arrive.
+  (let [n audio/SR]
+    (with-source (s16le (tone n 80.0 0.1))
+      (fn [src c]
+        (is (wait-for (head= src n)))
+        (live/poll! src)
+        (net/write! c (s16le (tone n 80.0 0.1)))
+        (is (wait-for (head= src (* 2 n))))
+        (is (not (:beat? (live/poll! src))) "a steady tone is not a beat")
+        (net/write! c (s16le (map fx/kick-sample (range n))))
+        (is (wait-for (head= src (* 3 n))))
+        (is (:beat? (live/poll! src)))))))
