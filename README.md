@@ -19,6 +19,8 @@ Rendered headless from the repo at 192×54 cells. The [dev log](https://phosphen
 
 Needs `lg` (let-go ≥ 1.13), `ffmpeg`, and `afplay` (macOS) for playback.
 `scripts/mk-test-track.py out.wav` writes a 40 s, 124 BPM test track.
+`just test` runs the tests; after an intended visual change, `just update-refs`
+rewrites the reference frames in `test/fixtures/`.
 
 ## Music
 
