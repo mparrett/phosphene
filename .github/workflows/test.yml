@@ -1,0 +1,26 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      LG_VERSION: 1.13.0
+      LG_SHA256: c3f5b6e0b7c1236e4dcb44759cfc7c30e1bd39d34a9999422c34673c2feacd78
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install lg
+        run: |
+          f=let-go_${LG_VERSION}_linux_amd64.tar.gz
+          curl -fsSLO "https://github.com/nooga/let-go/releases/download/v${LG_VERSION}/$f"
+          echo "$LG_SHA256  $f" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin" && tar -xzf "$f" -C "$HOME/.local/bin" lg
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Test
+        run: lg -source-paths src:test test/run.lg
