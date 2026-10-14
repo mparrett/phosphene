@@ -4,6 +4,7 @@
             [phosphene.live :as live]
             [phosphene.listen :as listen]
             [phosphene.fb :as fb]
+            [phosphene.sub :as sub]
             [phosphene.director :as dir]))
 
 (def ESC fb/ESC)
@@ -35,6 +36,9 @@
                      (recur more (assoc opts :mic "default")))
         "--pcm"    (recur (rest more) (assoc opts :pcm (parse-int (first more))))
         "--no-post" (recur more (assoc opts :no-post true))
+        "--sub"    (recur (rest more) (assoc opts :sub (first more)))
+        "--sub-gain" (recur (rest more) (assoc opts :sub-gain (parse-double (first more))))
+        "--bleed"  (recur (rest more) (assoc opts :bleed (parse-double (first more))))
         "--fps"    (recur (rest more) (assoc opts :fps (parse-int (first more))))
         "--size"   (recur (rest more) (assoc opts :size (mapv parse-int (string/split (first more) "x"))))
         "--dump"   (recur (drop 2 more) (assoc opts :dump [(parse-double (first more)) (second more)]))
@@ -46,10 +50,25 @@
       opts)))
 
 (defn- screen-fb
-  "A framebuffer for a cols×rows cell area at 1/scale resolution."
-  [cols rows scale]
-  (assoc (fb/make (max 8 (quot cols scale)) (max 8 (quot (* 2 rows) scale)))
-         :cols cols :rows rows))
+  "A framebuffer for a cols×rows cell area at 1/scale resolution; with a
+  subpixel layout, of that layout's pixel grid."
+  ([cols rows scale] (screen-fb cols rows scale nil))
+  ([cols rows scale mode]
+   ;; Effects assume square pixels, so a layout with tall or wide ones
+   ;; (scan, lcd) gets a square-pixel buffer with as many pixels, sampled.
+   (let [[w h] (if mode
+                 (let [[gw gh] (sub/grid mode cols rows)
+                       k (math/sqrt (/ (double (* gw gh)) (* 2 cols rows)))]
+                   [(int (math/round (* k cols))) (int (math/round (* k 2 rows)))])
+                 [cols (* 2 rows)])]
+     (assoc (fb/make (max 8 (quot w scale)) (max 8 (quot h scale)))
+            :cols cols :rows rows))))
+
+;; Pure channels give a third of the light, so the default gain makes up some.
+(defn- sub-ansi [f opts top]
+  (if-let [mode (:sub opts)]
+    (sub/ansi f mode (:cols f) (:rows f) top (or (:sub-gain opts) 2.0) (or (:bleed opts) 0.15))
+    (fb/ansi f (:cols f) (:rows f) top)))
 
 (defn- director [shape {:keys [fx preset no-post]}]
   (dir/make shape (if fx (dir/scene-index fx preset) (first dir/auto-order)) (nil? fx) (not no-post)))
@@ -87,13 +106,17 @@
 (defn- headless [{:keys [file dump bench frames size scale warm] :as opts}]
   (let [[cols rows] (or size [160 48])
         track (audio/load file)
-        shape (screen-fb cols rows (or scale 1))]
+        shape (screen-fb cols rows (or scale 1) (:sub opts))]
     (println (str "loaded " (basename file) ": " (format "%.1f" (:duration track)) " s, "
                   (count (filter pos? (seq (:onset track)))) " onsets"))
     (when dump
       (let [[t out] dump
             [d _] (simulate track (director shape opts) (max 0.0 (- t (or warm 3.0))) t)]
-        (spit out (fb/ppm (:shown d)))
+        ;; With --sub, a simulated screenshot at 8×16 px per cell instead.
+        (spit out (if-let [mode (:sub opts)]
+                    (sub/preview-ppm (:shown d) mode cols rows
+                                     (or (:sub-gain opts) 2.0) (or (:bleed opts) 0.15) 8 16)
+                    (fb/ppm (:shown d))))
         (println "wrote" out "—" (dir/label d))))
     (when frames
       (let [[t0 secs out] frames
@@ -104,7 +127,7 @@
       (let [t0 (min 30.0 (* 0.3 (:duration track)))
             [d ms] (simulate track (director shape opts) t0 (+ t0 (/ bench 30.0)))
             a0 (now-ms)
-            _  (dotimes [_ 10] (fb/ansi (:shown d) cols rows 1))
+            _  (dotimes [_ 10] (sub-ansi (assoc (:shown d) :cols cols :rows rows) opts 1))
             ams (/ (- (now-ms) a0) 10.0)]
         (println (format "%s %dx%d cells, %dx%d px: draw+listen %.1f ms/frame, ansi %.1f ms/frame"
                          (dir/label d) cols rows (:w shape) (:h shape) ms ams))))))
@@ -164,7 +187,7 @@
       (term/clear)
       (let [pid (when (and file (not mute)) (start-player file))]
         (try
-          (loop [d (director (screen-fb cols (dec rows) (or scale 2)) opts)
+          (loop [d (director (screen-fb cols (dec rows) (or scale (if (:sub opts) 1 2)) (:sub opts)) opts)
                  ls (listen/make-state)
                  t0 (now-ms) paused-at nil
                  last (now-ms) fps-avg 30.0]
@@ -177,7 +200,7 @@
                   d  (if paused-at (or (and (:shown d) d) (dir/step d a)) (dir/step d a))
                   f  (:shown d)
                   [c r] (or (term/size) [cols rows])]
-              (term/write (fb/ansi f (:cols f) (:rows f) 1))
+              (term/write (sub-ansi f opts 1))
               (term/write (hud c r {:name (dir/label d) :auto (:auto d) :t t
                                     :dur (:duration track) :fps fps-avg :a a :paused paused-at}))
               (term/flush)
@@ -187,7 +210,8 @@
                   (or (= k "q") (= k (str (char 3))) (= k ESC)
                       (and track (> t (+ 0.5 (:duration track))))) nil
                   resized
-                  (let [nd (dir/make (screen-fb c (dec r) (or scale 2)) (:i (:cur d)) (:auto d) (some? (:post d)))]
+                  (let [nd (dir/make (screen-fb c (dec r) (or scale (if (:sub opts) 1 2)) (:sub opts))
+                                     (:i (:cur d)) (:auto d) (some? (:post d)))]
                     (term/clear)
                     (recur nd ls t0 paused-at frame-start fps-avg))
                   (= k right) (recur (dir/step-scene d 1) ls t0 paused-at frame-start fps-avg)
