@@ -2,7 +2,7 @@
   "Drives live/connect from an in-process PCM server, as --pcm would see it."
   (:require [clojure.test :refer [deftest is testing]] [math] [net]
             [phosphene.audio :as audio] [phosphene.live :as live]
-            [phosphene.fixtures :as fx]))
+            [phosphene.listen :as listen] [phosphene.fixtures :as fx]))
 
 (defn- s16le
   "Little-endian int16 bytes for the samples xs."
@@ -121,3 +121,53 @@
         (net/write! c (s16le (map fx/kick-sample (range n))))
         (is (wait-for (head= src (* 3 n))))
         (is (:beat? (live/poll! src)))))))
+
+(deftest laptop-kicks-are-detected
+  ;; Little bass and a quiet level; the auto-gain lifts what's left of the
+  ;; kicks' attack enough for the bass band to see them.
+  ;; The pad's own attack can fire in the first half second.
+  (let [hits (filter #(>= % (quot audio/FPS-HOP 2)) (live/onsets (audio/decode (fx/laptop-kicks-wav))))
+        want (map #(int (* % fx/KICK-PERIOD audio/FPS-HOP)) (range 1 16))]
+    (is (= (count want) (count hits)))
+    (is (every? true? (map #(<= (abs (- %1 %2)) 2) hits want)))))
+
+(defn- stream-frames
+  "Writes xs to c a quarter second at a time, running live/frame after each
+  chunk arrives. Returns the frames."
+  [src c st xs]
+  (let [step (quot audio/SR 4)]
+    (loop [xs xs out [] t 0.0]
+      (if (seq xs)
+        (let [chunk (take step xs) h0 @(:head src)]
+          (net/write! c (s16le chunk))
+          (is (wait-for (head= src (+ h0 (count chunk)))))
+          (recur (drop step xs) (conj out (live/frame st src t 0.25)) (+ t 0.25)))
+        out))))
+
+(deftest noise-gate
+  (testing "steady hiss goes dark and fires no beats"
+    (with-source (byte-array 0)
+      (fn [src c]
+        (let [fs (stream-frames src c (listen/make-state) (fx/noise (* 6 audio/SR) 0.003))
+              late (drop 12 fs)]
+          (is (every? #(< (:level %) 0.05) late) "gated after ~3 s")
+          (is (< (:gate @(:st src)) 0.05))
+          (is (not-any? :beat late))))))
+  (testing "a steady tone is not noise"
+    (with-source (byte-array 0)
+      (fn [src c]
+        (let [fs (stream-frames src c (listen/make-state) (tone (* 4 audio/SR) 100.0 0.3))]
+          (is (every? #(< 0.5 (:level %)) (drop 4 fs)))))))
+  (testing "music over the hiss reopens it"
+    (with-source (byte-array 0)
+      (fn [src c]
+        ;; Frames land a quarter second into each kick's decay, so the gate
+        ;; itself is checked rather than the level.
+        (let [st (listen/make-state)
+              n (* 2 audio/SR)
+              _ (stream-frames src c st (fx/noise (* 5 audio/SR) 0.003))
+              closed (:gate @(:st src))
+              fs (stream-frames src c st (map + (map fx/kick-sample (range n)) (fx/noise n 0.003)))]
+          (is (< closed 0.05) "closed on the hiss first")
+          (is (< 0.9 (:gate @(:st src))) "open again")
+          (is (some :beat fs) "kicks register"))))))

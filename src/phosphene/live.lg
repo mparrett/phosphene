@@ -29,6 +29,12 @@
 (def ^:private MIC-WAIT-S 60)
 (def ^:private PCM-WAIT-S 5)
 
+(defn initial-state []
+  {:pos 0 :lp 0.0 :prev 0.0 :avg 0.0 :since 100
+   :peak (/ TARGET MAX-GAIN)
+   :rms 0.0 :gate 1.0 :flat 0.0
+   :blocks [] :bmin 1e9 :bmax 0.0 :bn 0})
+
 (defn start-mic
   "Starts ffmpeg capturing avfoundation audio device dev (an index or name;
   \"default\" is the system input) as a PCM server on port. Returns
@@ -82,24 +88,77 @@
         (reset! closed true))
       {:conn conn :ring ring :head head :closed closed
        :window (double-array fft/N)
-       :st (atom {:pos 0 :lp 0.0 :prev 0.0 :avg 0.0 :since 100 :peak (/ TARGET MAX-GAIN)
-                  :rms 0.0 :seen 0 :seen-ms (System/currentTimeMillis)
-                  :sound-ms (System/currentTimeMillis)})})))
+       :st (atom (assoc (initial-state) :seen 0 :seen-ms (System/currentTimeMillis)
+                        :sound-ms (System/currentTimeMillis)))})))
 
 (defn disconnect! [src] (try (net/close! (:conn src)) (catch e nil)))
 
 (defn- hop-levels
-  "Kernel: [rms bass-rms lp'] over ring samples [s0, s0+HOP), with the
-  150 Hz one-pole that audio/analyze uses for bass."
-  [^doubles ring s0 ^double lp ^double k]
+  "Kernel: [rms bass-rms lp'] over samples [s0, s0+HOP) of buf, read modulo
+  len (RING for the ring), with the 150 Hz one-pole that audio/analyze uses
+  for bass."
+  [^doubles buf s0 ^double lp ^double k len]
   (loop [i 0 lp lp sa 0.0 sb 0.0]
     (if (< i HOP)
-      (let [x (aget ring (mod (+ s0 i) RING)) lp (+ lp (* k (- x lp)))]
+      (let [x (aget buf (mod (+ s0 i) len)) lp (+ lp (* k (- x lp)))]
         (recur (inc i) lp (+ sa (* x x)) (+ sb (* lp lp))))
       [(math/sqrt (/ sa HOP)) (math/sqrt (/ sb HOP)) lp])))
 
 (def ^:private k-bass (- 1.0 (math/exp (/ (* -2.0 math/PI 150.0) audio/SR))))
 (def ^:private k-peak (math/exp (/ (- (/ (double HOP) audio/SR)) PEAK-RELEASE-S)))
+
+;; Noise gate. Mic self-noise is steady and spectrally flat; music, tones
+;; and drones are peaky or move. Measured 2026-10-17, flatness over
+;; 60 Hz–8 kHz: white/pink noise 0.28–0.57, tones, drones and music ≤ 0.08
+;; (p90); loudest/quietest hop over 10 s: noise 1.1–3.8, music ≥ 11 (p5).
+;; Gating on both keeps hat-heavy passages, which can look flat, open.
+(def ^:private FLAT-NOISE 0.15)
+(def ^:private DYN-MUSIC 8.0)
+(def ^:private GATE-BLOCK 30)   ; hops per dynamics block (0.5 s)
+(def ^:private GATE-BLOCKS 20)  ; blocks in the window (10 s)
+(def ^:private k-gate (- 1.0 (math/exp (/ (- (/ (double HOP) audio/SR)) 0.3))))
+
+(defn- dynamics
+  "Loudest over quietest hop rms across the block window."
+  [{:keys [blocks bmin bmax bn]}]
+  (let [bs (if (pos? bn) (conj blocks [bmin bmax]) blocks)]
+    (if (seq bs)
+      (/ (reduce max (map second bs)) (max 1e-9 (reduce min (map first bs))))
+      0.0)))
+
+(defn hop-step
+  "Advances the per-hop state s by one hop with levels ra (full band) and rb
+  (bass). Returns [s' hit?]. Pure, so it runs over a decoded track too."
+  [s ra rb]
+  (let [peak  (max ra (* k-peak (:peak s)))
+        bn    (inc (:bn s))
+        s     (assoc s :bmin (min (:bmin s) ra) :bmax (max (:bmax s) ra) :bn bn)
+        s     (if (< bn GATE-BLOCK) s
+                  (assoc s :blocks (vec (take-last GATE-BLOCKS (conj (:blocks s) [(:bmin s) (:bmax s)])))
+                           :bmin 1e9 :bmax 0.0 :bn 0))
+        noise? (and (> (:flat s) FLAT-NOISE) (< (dynamics s) DYN-MUSIC))
+        gate  (+ (:gate s) (* k-gate (- (if noise? 0.0 1.0) (:gate s))))
+        ;; Fully closed reads as silence, so listen's relative levels settle.
+        gv    (if (< gate 0.01) 0.0 gate)
+        g     (* gv (min MAX-GAIN (/ TARGET (max peak 1e-6))))
+        b     (* g rb)
+        hit?  (audio/onset? b (:prev s) (:avg s) (:since s))]
+    [(assoc s :prev b :avg (audio/onset-avg (:avg s) b)
+              :since (if hit? 0 (inc (:since s)))
+              :peak peak :gate gate :gain g :rms (* g ra))
+     hit?]))
+
+(defn onsets
+  "Hop indices where live detection fires over a whole decoded track, with
+  the gate held open. For tuning and tests."
+  [^doubles samples]
+  (let [n (quot (alength samples) HOP)]
+    (loop [f 0 lp 0.0 s (initial-state) acc []]
+      (if (< f n)
+        (let [[ra rb lp] (hop-levels samples (* f HOP) lp k-bass (alength samples))
+              [s hit?] (hop-step s ra rb)]
+          (recur (inc f) lp s (if hit? (conj acc f) acc)))
+        acc))))
 
 (defn poll!
   "Runs onset detection over the hops that arrived since the last call and
@@ -115,15 +174,10 @@
         [s beat?]
         (loop [pos pos s s beat? false]
           (if (<= (+ pos HOP) h)
-            (let [[ra rb lp] (hop-levels ring pos (:lp s) k-bass)
-                  peak (max ra (* k-peak (:peak s)))
-                  g    (min MAX-GAIN (/ TARGET (max peak 1e-6)))
-                  b    (* g rb)
-                  hit? (audio/onset? b (:prev s) (:avg s) (:since s))]
+            (let [[ra rb lp] (hop-levels ring pos (:lp s) k-bass RING)
+                  [s hit?] (hop-step (assoc s :lp lp) ra rb)]
               (recur (+ pos HOP)
-                     (assoc s :pos (+ pos HOP) :lp lp :prev b :avg (audio/onset-avg (:avg s) b)
-                            :since (if hit? 0 (inc (:since s))) :peak peak :gain g :rms (* g ra)
-                            :sound-ms (if (> ra SILENT) now (:sound-ms s)))
+                     (assoc s :pos (+ pos HOP) :sound-ms (if (> ra SILENT) now (:sound-ms s)))
                      (or beat? hit?)))
             [s beat?]))
         s   (if (not= h (:seen s)) (assoc s :seen h :seen-ms now) s)
@@ -137,13 +191,41 @@
       (let [j (+ (- h n) i)]
         (aset window i (if (neg? j) 0.0 (* g (aget ring (mod j RING)))))))
     (reset! st s)
-    {:window window :beat? beat? :rms rms
+    {:window window :beat? beat? :rms rms :gain g
      :level (/ rms TARGET)
      :stalled (or lost (> (- now (:sound-ms s)) STALL-MS))}))
 
+(def ^:private flat-bins
+  (let [hz (/ (double audio/SR) fft/N)]
+    [(max 1 (int (/ 60.0 hz))) (min (quot fft/N 2) (int (/ 8000.0 hz)))]))
+
+(defn flatness
+  "Spectral flatness (geometric over arithmetic mean of power) of
+  magnitudes mags over 60 Hz–8 kHz: near 0 for tones, ~0.5 for white noise."
+  [^doubles mags]
+  (let [[b0 b1] flat-bins n (- b1 b0)]
+    (loop [k b0 sl 0.0 sp 0.0]
+      (if (< k b1)
+        (let [p (+ 1e-20 (* (aget mags k) (aget mags k)))]
+          (recur (inc k) (+ sl (math/log p)) (+ sp p)))
+        (/ (math/exp (/ sl n)) (max 1e-20 (/ sp n)))))))
+
+(defn- raw-window
+  "The latest fft/N ring samples, ungained."
+  [{:keys [ring head]}]
+  (let [h @head out (double-array fft/N)]
+    (dotimes [i fft/N]
+      (let [j (+ (- h fft/N) i)] (aset out i (if (neg? j) 0.0 (aget ring (mod j RING))))))
+    out))
+
 (defn frame
-  "listen features from the latest live audio, at wall-clock time t."
+  "listen features from the latest live audio, at wall-clock time t. The
+  window's flatness feeds the next poll's noise gate. Flatness ignores
+  scale, so listen's spectrum serves while the gain is above zero; a closed
+  gate zeroes the window, so then it takes its own FFT of the raw samples."
   [st src t dt]
-  (let [{:keys [window beat? rms level stalled]} (poll! src)]
-    (assoc (listen/features st window (alength window) t dt beat? rms)
-           :level level :stalled stalled)))
+  (let [{:keys [window beat? rms level stalled gain]} (poll! src)
+        f (listen/features st window (alength window) t dt beat? rms)
+        mags (if (pos? gain) (:spectrum f) (fft/magnitudes (raw-window src) fft/N))]
+    (swap! (:st src) assoc :flat (flatness mags))
+    (assoc f :level level :stalled stalled)))

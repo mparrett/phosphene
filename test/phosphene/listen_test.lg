@@ -1,0 +1,17 @@
+(ns phosphene.listen-test
+  (:require [clojure.test :refer [deftest is]] [math]
+            [phosphene.audio :as audio] [phosphene.listen :as listen]))
+
+(defn- band-at-1k
+  "Band 18 (which holds 1 kHz) for a 1 kHz tone at amplitude amp."
+  [amp]
+  (let [n 2048 s (double-array n)]
+    (dotimes [i n] (aset s i (* amp (math/sin (/ (* 2 math/PI 1000.0 i) audio/SR)))))
+    (aget (:bands (listen/features (listen/make-state) s n 0.0 (/ 1.0 30) false 0.0)) 18)))
+
+(deftest band-levels-are-pinned
+  ;; Effects are tuned against these levels, so a change to the band curve
+  ;; should be deliberate. Values measured 2026-10-17; two amplitudes pin
+  ;; both the curve's scale and its log knee.
+  (is (< (abs (- (band-at-1k 0.25) 0.848)) 0.01))
+  (is (< (abs (- (band-at-1k 0.025) 0.172)) 0.01)))

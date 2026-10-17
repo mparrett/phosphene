@@ -119,3 +119,10 @@ Each loop iteration appends one line: date, what landed, what's next.
   "no signal", connect waits out the macOS permission prompt, ffmpeg exits
   on its own if phosphene dies. Next: tune live input (hiss under the gain
   cap, onset thresholds).
+- 2026-10-17 — live tuning: a noise gate closes on input that is both
+  spectrally flat and steady, so room hiss reads as silence while tones,
+  drones and music pass. Onsets on bass-cut input (Sodium through a 200 Hz
+  high-pass) already hold up, 224/250 with ~20% extra, so the rule is
+  unchanged; bass normalisation was tried and made no difference. Tests pin
+  the onset threshold and band curve. Next: check the gate and onsets
+  against a real room and a laptop speaker.
