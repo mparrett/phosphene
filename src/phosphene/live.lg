@@ -108,10 +108,12 @@
 (def ^:private k-peak (math/exp (/ (- (/ (double HOP) audio/SR)) PEAK-RELEASE-S)))
 
 ;; Noise gate. Mic self-noise is steady and spectrally flat; music, tones
-;; and drones are peaky or move. Measured 2026-10-17, flatness over
-;; 60 Hz–8 kHz: white/pink noise 0.28–0.57, tones, drones and music ≤ 0.08
-;; (p90); loudest/quietest hop over 10 s: noise 1.1–3.8, music ≥ 11 (p5).
-;; Gating on both keeps hat-heavy passages, which can look flat, open.
+;; and drones are peaky or move. Gating on both keeps hat-heavy passages,
+;; which can look flat, open. Measured 2026-10-17 with numpy over 60 s of
+;; each signal (white, pink, and band-limited pink noise; tone; drone;
+;; Sodium / UV, plain and through a 200 Hz high-pass):
+;;   flatness, 65 Hz–8 kHz   noise p10 ≥ 0.25; tones, drones, music p90 ≤ 0.08
+;;   dynamics (see below)    noise p95 ≤ 2.5;  music p5 ≥ 17
 (def ^:private FLAT-NOISE 0.15)
 (def ^:private DYN-MUSIC 8.0)
 (def ^:private GATE-BLOCK 30)   ; hops per dynamics block (0.5 s)
@@ -119,11 +121,14 @@
 (def ^:private k-gate (- 1.0 (math/exp (/ (- (/ (double HOP) audio/SR)) 0.3))))
 
 (defn- dynamics
-  "Loudest over quietest hop rms across the block window."
+  "The median block's loudest hop over the quietest hop in the window. The
+  median, not the loudest, so one cough or door in a quiet room doesn't
+  hold the gate open for the whole window; music has a hit in most blocks."
   [{:keys [blocks bmin bmax bn]}]
   (let [bs (if (pos? bn) (conj blocks [bmin bmax]) blocks)]
     (if (seq bs)
-      (/ (reduce max (map second bs)) (max 1e-9 (reduce min (map first bs))))
+      (let [mx (vec (sort (map second bs)))]
+        (/ (nth mx (quot (count mx) 2)) (max 1e-9 (reduce min (map first bs)))))
       0.0)))
 
 (defn hop-step
@@ -140,9 +145,12 @@
         gate  (+ (:gate s) (* k-gate (- (if noise? 0.0 1.0) (:gate s))))
         ;; Fully closed reads as silence, so listen's relative levels settle.
         gv    (if (< gate 0.01) 0.0 gate)
-        g     (* gv (min MAX-GAIN (/ TARGET (max peak 1e-6))))
-        b     (* g rb)
-        hit?  (audio/onset? b (:prev s) (:avg s) (:since s))]
+        g0    (min MAX-GAIN (/ TARGET (max peak 1e-6)))
+        g     (* gv g0)
+        ;; Onsets run on the ungated level, so the gate's own fade can't
+        ;; read as a rise; the gate only decides whether a hit counts.
+        b     (* g0 rb)
+        hit?  (and (audio/onset? b (:prev s) (:avg s) (:since s)) (> gv 0.5))]
     [(assoc s :prev b :avg (audio/onset-avg (:avg s) b)
               :since (if hit? 0 (inc (:since s)))
               :peak peak :gate gate :gain g :rms (* g ra))
@@ -197,11 +205,12 @@
 
 (def ^:private flat-bins
   (let [hz (/ (double audio/SR) fft/N)]
-    [(max 1 (int (/ 60.0 hz))) (min (quot fft/N 2) (int (/ 8000.0 hz)))]))
+    ;; Round up, so mains hum at 50 Hz stays below the first bin (65 Hz).
+    [(int (math/ceil (/ 60.0 hz))) (min (quot fft/N 2) (int (/ 8000.0 hz)))]))
 
 (defn flatness
   "Spectral flatness (geometric over arithmetic mean of power) of
-  magnitudes mags over 60 Hz–8 kHz: near 0 for tones, ~0.5 for white noise."
+  magnitudes mags over 65 Hz–8 kHz: near 0 for tones, ~0.5 for white noise."
   [^doubles mags]
   (let [[b0 b1] flat-bins n (- b1 b0)]
     (loop [k b0 sl 0.0 sp 0.0]
@@ -222,10 +231,14 @@
   "listen features from the latest live audio, at wall-clock time t. The
   window's flatness feeds the next poll's noise gate. Flatness ignores
   scale, so listen's spectrum serves while the gain is above zero; a closed
-  gate zeroes the window, so then it takes its own FFT of the raw samples."
+  gate zeroes the window, so then it takes its own FFT of the raw samples.
+  Flatness drops at once and rises over ~1 s, so one peaky frame keeps the
+  gate open through the noisy gaps between sparse hits."
   [st src t dt]
   (let [{:keys [window beat? rms level stalled gain]} (poll! src)
         f (listen/features st window (alength window) t dt beat? rms)
-        mags (if (pos? gain) (:spectrum f) (fft/magnitudes (raw-window src) fft/N))]
-    (swap! (:st src) assoc :flat (flatness mags))
+        mags (if (pos? gain) (:spectrum f) (fft/magnitudes (raw-window src) fft/N))
+        now (flatness mags)]
+    (swap! (:st src) update :flat
+           (fn [prev] (if (< now prev) now (+ prev (* (- 1.0 (math/exp (- dt))) (- now prev))))))
     (assoc f :level level :stalled stalled)))

@@ -170,4 +170,28 @@
               fs (stream-frames src c st (map + (map fx/kick-sample (range n)) (fx/noise n 0.003)))]
           (is (< closed 0.05) "closed on the hiss first")
           (is (< 0.9 (:gate @(:st src))) "open again")
-          (is (some :beat fs) "kicks register"))))))
+          (is (some :beat fs) "kicks register")))))
+  (testing "a cough in the hiss doesn't hold it open"
+    (with-source (byte-array 0)
+      (fn [src c]
+        (let [st (listen/make-state)
+              cough (concat (fx/noise (quot audio/SR 10) 0.05) (fx/noise (* 2 audio/SR) 0.003))]
+          (stream-frames src c st (fx/noise (* 5 audio/SR) 0.003))
+          (stream-frames src c st cough)
+          (is (< (:gate @(:st src)) 0.05))))))
+  (testing "hats alone look flat but move, so they stay open"
+    (with-source (byte-array 0)
+      (fn [src c]
+        (let [q (quot audio/SR 4) hit (quot audio/SR 30)
+              hats (apply concat (repeat 24 (concat (fx/noise hit 0.3) (fx/noise (- q hit) 0.003))))]
+          (stream-frames src c (listen/make-state) hats)
+          (is (< 0.9 (:gate @(:st src))))))))
+  (testing "reopening onto a steady tone fires no beat"
+    ;; The fade-in must not read as a rise in level.
+    (with-source (byte-array 0)
+      (fn [src c]
+        (let [st (listen/make-state)
+              _ (stream-frames src c st (fx/noise (* 5 audio/SR) 0.003))
+              fs (stream-frames src c st (tone (* 2 audio/SR) 80.0 0.3))]
+          (is (< 0.9 (:gate @(:st src))) "open again")
+          (is (not-any? :beat fs)))))))
