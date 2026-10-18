@@ -1,0 +1,109 @@
+(ns phosphene.web
+  "Spike: phosphene's render loop under lg -w, on a track synthesized in lg,
+  so no decoder or audio bridge is needed. Runs flat out for ?frames= frames
+  and reports per-stage timings through js/emit.
+
+  ?out=ansi    half-block ANSI to the page's terminal (?cols= ?rows= ?scale=)
+  ?out=canvas  RGBA through surface/present (?w= ?h=)
+  ?out=none    simulation only
+  ?fx=plasma|milk|superscope pins an engine; ?post=0 drops post FX."
+  (:require [math] [js] [surface] [os] [string]
+            [phosphene.audio :as audio]
+            [phosphene.listen :as listen]
+            [phosphene.fb :as fb]
+            [phosphene.director :as dir]))
+
+;; Native runs, where there is no page URL, read PHOS_<KEY> instead.
+(defn- param [k default]
+  (let [v (or (js/url-param k) (os/getenv (str "PHOS_" (string/upper-case k))))]
+    (if (and v (not= v "")) v default)))
+
+(defn- iparam [k default] (parse-int (param k (str default))))
+
+(defn- now-ms [] (System/currentTimeMillis))
+
+(defn- synth
+  "secs of a 124 BPM kick, an off-beat hat and a two-note pad."
+  [secs]
+  (let [n (int (* secs audio/SR))
+        out (double-array n)
+        beat (/ 60.0 124)
+        sr (double audio/SR)]
+    (loop [i 0 seed 12345]
+      (if (< i n)
+        (let [t (/ i sr)
+              tb (mod t beat)
+              th (mod (+ t (* 0.5 beat)) beat)
+              seed (mod (+ (* seed 1103515245) 12345) 2147483648)
+              wn (- (* 2.0 (/ seed 2147483648.0)) 1.0)
+              kick (* 0.7 (math/sin (* 2 math/PI (+ (* 50 tb) (* 3 (- 1.0 (math/exp (* -30 tb)))))))
+                      (math/exp (* -8 tb)))
+              hat (* 0.15 wn (math/exp (* -60 th)))
+              f (if (< (mod t (* 8 beat)) (* 4 beat)) 220.0 196.0)
+              pad (* 0.12 (+ (math/sin (* 2 math/PI f t)) (math/sin (* 2 math/PI 1.5 f t))))]
+          (aset out i (+ kick hat pad))
+          (recur (inc i) seed))
+        out))))
+
+(defn- rgba!
+  "Packs the float framebuffer into canvas bytes."
+  [^doubles r ^doubles g ^doubles b out]
+  (let [n (alength r)]
+    (loop [i 0]
+      (if (< i n)
+        (let [j (* 4 i)]
+          (aset out j (fb/c8 (aget r i)))
+          (aset out (+ j 1) (fb/c8 (aget g i)))
+          (aset out (+ j 2) (fb/c8 (aget b i)))
+          (aset out (+ j 3) 255)
+          (recur (inc i)))
+        nil))))
+
+(defn -main []
+  (let [out (param "out" "canvas")
+        fx (param "fx" nil)
+        frames (iparam "frames" 300)
+        cols (iparam "cols" 160) rows (iparam "rows" 48) scale (iparam "scale" 2)
+        [w h] (if (= out "canvas")
+                [(iparam "w" 160) (iparam "h" 96)]
+                [(max 8 (quot cols scale)) (max 8 (quot (* 2 rows) scale))])
+        a0 (now-ms)
+        track (audio/analyze (synth 20.0))
+        boot-ms (- (now-ms) a0)
+        shape (assoc (fb/make w h) :cols cols :rows rows)
+        d0 (dir/make shape (if fx (dir/scene-index fx nil) (first dir/auto-order)) (nil? fx)
+                     (not= "0" (param "post" "1")))
+        ;; identity: lg compile's fallback branch for a typed byte-array local
+        ;; doesn't type-check (let-go, 2026-10-18).
+        buf (identity (byte-array (* 4 w h)))
+        ls (listen/make-state)]
+    (js/emit :phos-boot {:boot-ms boot-ms :out out :w w :h h :label (dir/label d0)})
+    (loop [k 0 d d0 sim 0 outt 0 t0 (now-ms) last (now-ms)]
+      (if (< k frames)
+        (let [s0 (now-ms)
+              t (/ (- s0 t0) 1000.0)
+              dt (max 0.001 (/ (- s0 last) 1000.0))
+              a (listen/frame ls track (mod t 19.0) dt)
+              d (dir/step d a)
+              f (:shown d)
+              s1 (now-ms)]
+          (case out
+            "ansi" (print (fb/ansi f cols rows 1))
+            "canvas" (do (rgba! (:r f) (:g f) (:b f) buf) (surface/present buf w h))
+            nil)
+          (let [s2 (now-ms)]
+            (when (= 0 (mod (inc k) 60))
+              (js/emit :phos-progress {:frame (inc k) :label (dir/label d)}))
+            (recur (inc k) d (+ sim (- s1 s0)) (+ outt (- s2 s1)) t0 s0)))
+        (let [total (- (now-ms) t0)]
+          (js/emit :phos-done {:frames frames :total-ms total
+                               :fps (/ (* 1000.0 frames) (max 1 total))
+                               :sim-ms (/ (double sim) frames)
+                               :out-ms (/ (double outt) frames)
+                               :label (dir/label d) :boot-ms boot-ms})
+          (println (format "\ndone: %s %s %dx%d, %d frames, %.1f fps, sim %.1f ms, out %.1f ms, boot %d ms"
+                           (dir/label d) out w h frames (/ (* 1000.0 frames) (max 1 total))
+                           (/ (double sim) frames) (/ (double outt) frames) boot-ms)))))))
+
+;; lg -w runs top-level forms while it builds; PHOS_SKIP=1 keeps that build quick.
+(when-not (= "1" (os/getenv "PHOS_SKIP")) (-main))

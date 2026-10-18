@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>phosphene wasm spike</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{height:100%;background:#000;color:#9a94b8;font:12px monospace;overflow:hidden}
+    #screen{position:absolute;inset:0;width:100%;height:100%;image-rendering:auto;display:none}
+    #term{position:absolute;inset:0;display:none}
+    #hud{position:absolute;left:8px;bottom:8px;background:#0c0814cc;padding:4px 8px;white-space:pre;z-index:2}
+  </style>
+</head>
+<body>
+  <canvas id="screen"></canvas>
+  <div id="term"></div>
+  <div id="hud">loading…</div>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
+  <script>
+__LG_HOST_JS_BODY_PLACEHOLDER__
+  </script>
+  <script>
+  // Page-side counters: what was actually drawn, as opposed to what the
+  // worker produced. Read by measure.py through window.__phos.
+  (function() {
+    const q = new URLSearchParams(location.search);
+    const out = q.get('out') || 'canvas';
+    const P = window.__phos = { t0: performance.now(), drawn: 0, firstDraw: null, lastDraw: null,
+                                boot: null, done: null, bytes: 0, ready: null };
+    const hud = document.getElementById('hud');
+    const show = () => {
+      const span = (P.lastDraw - P.firstDraw) / 1000;
+      const fps = P.drawn > 1 && span > 0 ? ((P.drawn - 1) / span).toFixed(1) : '…';
+      hud.textContent = `${out}  drawn ${P.drawn}  page fps ${fps}` +
+        (P.done ? `  worker fps ${P.done.fps.toFixed(1)}  sim ${P.done['sim-ms'].toFixed(1)} ms  out ${P.done['out-ms'].toFixed(1)} ms` : '');
+    };
+    for (const n of ['phos-boot', 'phos-done', 'phos-progress'])
+      window.addEventListener(n, (e) => {
+        const d = typeof e.detail === 'string' ? JSON.parse(e.detail) : e.detail;
+        if (n === 'phos-boot') { P.boot = d; P.bootAt = performance.now(); }
+        if (n === 'phos-done') { P.done = d; P.doneAt = performance.now(); }
+        show();
+      });
+    const mark = () => { const t = performance.now(); P.drawn++; P.firstDraw ??= t; P.lastDraw = t; };
+
+    window.LetGoHost.onReady((mode) => {
+      P.ready = performance.now(); P.mode = mode;
+      if (out === 'canvas') {
+        const cv = document.getElementById('screen');
+        cv.style.display = 'block';
+        const ctx = cv.getContext('2d');
+        window.LetGoHost.onSurface((buf, w, h) => {
+          if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+          ctx.putImageData(new ImageData(new Uint8ClampedArray(buf), w, h), 0, 0);
+          mark(); if (P.drawn % 30 === 0) show();
+        });
+      } else {
+        const el = document.getElementById('term');
+        el.style.display = 'block';
+        const cols = +(q.get('cols') || 160), rows = +(q.get('rows') || 48);
+        const fs = Math.floor(Math.min(innerWidth / (cols * 0.6), innerHeight / rows));
+        const term = new Terminal({ cols, rows, fontSize: Math.max(4, fs), lineHeight: 1,
+                                    fontFamily: 'Menlo, monospace', allowProposedApi: true });
+        term.open(el);
+        if (q.get('gl') !== '0') { try { term.loadAddon(new WebglAddon.WebglAddon()); P.gl = true; } catch (e) { P.gl = String(e); } }
+        if (mode === 'worker') window.LetGoHost.setSize(cols, rows);
+        // A frame ends with the synchronized-update close (mode 2026).
+        window.LetGoHost.onOutput((s) => {
+          P.bytes += s.length;
+          const end = s.includes('\x1b[?2026l');
+          term.write(s, end ? () => { mark(); if (P.drawn % 30 === 0) show(); } : undefined);
+        });
+      }
+    });
+  })();
+  </script>
+</body>
+</html>
