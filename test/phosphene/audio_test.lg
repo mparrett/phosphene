@@ -35,6 +35,16 @@
     (is (every? true? (map #(<= (abs (- %1 %2)) 1) hits want))
         "each onset within a hop of its kick")))
 
+(deftest onsets-catch-kicks-over-a-bed
+  ;; Each kick rises ~1.6× over the bed, so a stiffer threshold misses them.
+  ;; The bed's own attack can fire in the first second.
+  (let [tr (audio/load (fx/kicks-on-bed-wav))
+        hits (filter #(>= % audio/FPS-HOP)
+                     (keep-indexed (fn [i v] (when (pos? v) i)) (seq (:onset tr))))
+        want (map #(int (* % fx/KICK-PERIOD audio/FPS-HOP)) (range 2 16))]
+    (is (= (count want) (count hits)))
+    (is (every? true? (map #(<= (abs (- %1 %2)) 1) hits want)))))
+
 (deftest no-onsets-in-a-steady-tone
   ;; The trailing mean starts at zero, so the attack can fire while it
   ;; catches up; only the settled part counts.

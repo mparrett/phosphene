@@ -66,13 +66,22 @@ agent-style HUD strip.
 
 ## Later phase
 
-Browser build. As of 2026-10-12, let-go's WASM build takes only key presses
-from JS (`os/sh` and `net` are unavailable), so it needs an upstream sample channel:
-an AudioWorklet writing into a SharedArrayBuffer ring, the same shape as
-the key ring. `live.lg` already polls a ring per frame, so only its feed
-changes; files would play and decode in the browser and go through that
-same path. Measure the VM's frame rate under WASM first. Hosting needs
-COOP/COEP headers for SharedArrayBuffer.
+Browser build. let-go's WASM build has no `os/sh` or `net`, so samples
+have to come in from JS: an AudioWorklet writing into a SharedArrayBuffer
+ring. `live.lg` already polls a ring per frame, so only its feed changes;
+files would play and decode in the browser and go through that same path.
+
+As of 2026-10-18 this needs nothing new upstream. phosphene would ship a
+small Go package registering an audio-input namespace (nooga/let-go#1064),
+linked into the `lg -w` page with `-w-module`/`-import`, and a page script
+that owns the AudioContext. mparrett/undertone#45 has that split for
+output (worker fills the ring, page plays it); phosphene's is the reverse,
+mic → worklet → ring → worker. TinyGo for `-w-module` builds is
+nooga/let-go#1077, open as of today; let it get some use elsewhere before
+depending on it.
+
+Measure the VM's frame rate under WASM first. Hosting needs COOP/COEP
+headers for SharedArrayBuffer.
 
 ## Log
 
@@ -119,3 +128,10 @@ Each loop iteration appends one line: date, what landed, what's next.
   "no signal", connect waits out the macOS permission prompt, ffmpeg exits
   on its own if phosphene dies. Next: tune live input (hiss under the gain
   cap, onset thresholds).
+- 2026-10-17 — live tuning: a noise gate closes on input that is both
+  spectrally flat and steady, so room hiss reads as silence while tones,
+  drones and music pass. Onsets on bass-cut input (Sodium through a 200 Hz
+  high-pass) already hold up, 224/250 with ~20% extra, so the rule is
+  unchanged; bass normalisation was tried and made no difference. Tests pin
+  the onset threshold and band curve. Next: check the gate and onsets
+  against a real room and a laptop speaker.

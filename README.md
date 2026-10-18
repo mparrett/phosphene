@@ -48,7 +48,8 @@ To just listen: [phosphene.aibuilds.me/sodium-uv.mp3](https://phosphene.aibuilds
 - **Mic input is macOS only** (ffmpeg's avfoundation). macOS grants mic access
   to the terminal app, or under tmux to whichever app started the tmux server;
   if it's denied, ffmpeg delivers silence and the HUD shows "no signal". Live
-  input has no lookahead, so beats register as they land.
+  input has no lookahead, so beats register as they land. A quiet room's
+  steady hiss is gated to silence; anything with a pitch or a pulse passes.
 - **Speed.** On the let-go VM it runs at roughly 10–20 fps at 160×48 cells
   (measured 2026-10-10); the hot loops are written for let-go's AOT
   compiler, which is where smooth frame rates are meant to come from.

@@ -15,11 +15,12 @@
 
 (defn cleanup! [] (when (realized? dir) (os/sh "rm" "-rf" @dir)))
 
-(defn- gen [name expr secs]
+(defn- gen [name expr secs & [af]]
   (let [out (path (str name ".wav"))
-        res (os/sh "ffmpeg" "-nostdin" "-v" "error" "-f" "lavfi"
-                   "-i" (str "aevalsrc='" expr "':s=" audio/SR ":d=" secs)
-                   "-c:a" "pcm_s16le" out)]
+        res (apply os/sh (concat ["ffmpeg" "-nostdin" "-v" "error" "-f" "lavfi"
+                                  "-i" (str "aevalsrc='" expr "':s=" audio/SR ":d=" secs)]
+                                 (when af ["-af" af])
+                                 ["-c:a" "pcm_s16le" out]))]
     (when-not (zero? (:exit res))
       (throw (ex-info (str "ffmpeg failed: " (:err res)) {})))
     out))
@@ -33,8 +34,27 @@
 
 (def kicks-wav (memoize #(gen "kicks" kick 8)))
 
+;; The kicks over a steady 70 Hz bed, so each rises only ~1.6× above the
+;; trailing mean (measured 2026-10-17): close to onset?'s 1.35×.
+(def kicks-on-bed-wav (memoize #(gen "kicks-bed" (str "0.6*sin(2*PI*70*t)+" kick) 8)))
+
+;; Kicks under an 800 Hz pad, as a laptop mic hears them from laptop
+;; speakers: little left below 200 Hz, and quiet. These kicks sweep down
+;; from ~170 Hz like real ones, so the high-pass leaves their attack; the
+;; pad sets the full-band level, as mids and highs do in real music.
+(def laptop-kicks-wav
+  (memoize #(gen "kicks-laptop"
+                 (str "0.3*sin(2*PI*800*t)+0.9*sin(2*PI*(45*mod(t," KICK-PERIOD ")"
+                      "+4*(1-exp(-30*mod(t," KICK-PERIOD ")))))*exp(-9*mod(t," KICK-PERIOD "))")
+                 8 "highpass=f=200:poles=2,highpass=f=200:poles=2,volume=0.3")))
+
 ;; A steady bass tone: loud, but nothing for onsets to fire on.
 (def tone-wav (memoize #(gen "tone" "0.6*sin(2*PI*80*t)" 4)))
+
+(defn noise
+  "n samples of uniform white noise at amplitude amp."
+  [n amp]
+  (repeatedly n #(* amp (- (* 2.0 (rand)) 1.0))))
 
 (defn kick-sample
   "The same kick as kicks-wav, at sample index i."

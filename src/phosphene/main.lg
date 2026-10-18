@@ -223,6 +223,9 @@
       0 (usage)
       1 nil
       (do (println "pick one input: a file, --mic or --pcm") (os/exit 2)))
+    (when (and (not (:file opts)) (some opts [:dump :bench :frames]))
+      (println "--dump, --bench and --frames need an audio file, not --mic or --pcm")
+      (os/exit 2))
     (if (and (:file opts) (or (:dump opts) (:bench opts) (:frames opts)))
       (headless opts)
       (live opts))))
