@@ -66,13 +66,22 @@ agent-style HUD strip.
 
 ## Later phase
 
-Browser build. As of 2026-10-12, let-go's WASM build takes only key presses
-from JS (`os/sh` and `net` are unavailable), so it needs an upstream sample channel:
-an AudioWorklet writing into a SharedArrayBuffer ring, the same shape as
-the key ring. `live.lg` already polls a ring per frame, so only its feed
-changes; files would play and decode in the browser and go through that
-same path. Measure the VM's frame rate under WASM first. Hosting needs
-COOP/COEP headers for SharedArrayBuffer.
+Browser build. let-go's WASM build has no `os/sh` or `net`, so samples
+have to come in from JS: an AudioWorklet writing into a SharedArrayBuffer
+ring. `live.lg` already polls a ring per frame, so only its feed changes;
+files would play and decode in the browser and go through that same path.
+
+As of 2026-10-18 this needs nothing new upstream. phosphene would ship a
+small Go package registering an audio-input namespace (nooga/let-go#1064),
+linked into the `lg -w` page with `-w-module`/`-import`, and a page script
+that owns the AudioContext. mparrett/undertone#45 has that split for
+output (worker fills the ring, page plays it); phosphene's is the reverse,
+mic → worklet → ring → worker. TinyGo for `-w-module` builds is
+nooga/let-go#1077, open as of today; let it get some use elsewhere before
+depending on it.
+
+Measure the VM's frame rate under WASM first. Hosting needs COOP/COEP
+headers for SharedArrayBuffer.
 
 ## Log
 
