@@ -52,12 +52,12 @@ At 160×96 px (four times the pixels):
 
 ## let-go issues found
 
-- **`lg compile` emits Go that doesn't type-check** for `aget`, `alength`
+- **`lg compile` emits Go that doesn't type-check** (nooga/let-go#1081) for `aget`, `alength`
   and `byte-array` when the result lands in a typed local but the call goes
   through the generic `rt.Core*f` fallback: 37 sites across fft, audio,
   plasma, milk and post. Reproduces on `main` at b8258829; the commit before
   #1057 (d0108ba6) compiles cleanly. The Node numbers above wrap those call
   sites by hand.
-- **`lg compile` imports namespaces it skipped.** An input with "no lowerable
+- **`lg compile` imports namespaces it skipped** (nooga/let-go#1082). An input with "no lowerable
   defns" (the `scopes/*` presets) is still imported in `main.go`, so the build
   fails; leaving those files out of the inputs works.
