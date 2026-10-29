@@ -78,10 +78,20 @@ that owns the AudioContext. mparrett/undertone#45 has that split for
 output (worker fills the ring, page plays it); phosphene's is the reverse,
 mic → worklet → ring → worker. TinyGo for `-w-module` builds is
 nooga/let-go#1077, open as of today; let it get some use elsewhere before
-depending on it.
+depending on it. (It merged 2026-10-21.)
 
-Measure the VM's frame rate under WASM first. Hosting needs COOP/COEP
-headers for SharedArrayBuffer.
+Hosting needs COOP/COEP headers for SharedArrayBuffer.
+
+Frame rate under WASM, measured 2026-10-18 on branch `spike/wasm` (method
+and full tables in its `spikes/wasm/README.md`; single runs on a loaded
+laptop, ±30%): the VM built with TinyGo, drawing to a canvas at the
+terminal's resolution, runs plasma 10.7, milk 7.4 and superscope 11.6 fps,
+about what the terminal gets natively. Stock Go's WASM port is 10–15× slower
+than native and TinyGo halves that, so a browser build means TinyGo. Draw to
+a canvas: ANSI through xterm.js cost 75 ms a frame against 10 ms to pack
+RGBA. `lg compile` buys 2–3× natively but only ~1.7× in WASM. The TinyGo
+page is 2.6 MB (stock Go 8.5 MB). The two `lg compile` failures the spike
+hit, nooga/let-go#1081 and #1082, were fixed 2026-10-21.
 
 ## Log
 
@@ -135,3 +145,6 @@ Each loop iteration appends one line: date, what landed, what's next.
   unchanged; bass normalisation was tried and made no difference. Tests pin
   the onset threshold and band curve. Next: check the gate and onsets
   against a real room and a laptop speaker.
+- 2026-10-29 — wasm spike wrapped: frame-rate results recorded under Later
+  phase, branch `spike/wasm` kept for the harness. Next: HTTP stream input
+  (spec in project-docs, 2026-10-29).
