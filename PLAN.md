@@ -149,5 +149,5 @@ Each loop iteration appends one line: date, what landed, what's next.
   phase, branch `spike/wasm` kept for the harness. Next: HTTP stream input
   (spec in project-docs, 2026-10-29).
 - 2026-11-13 — subpixel spike (`--sub bayer|rgbw|lcd|scan`, 2026-10-13) kept
-  for reference on branch `spike/subpixel`, with its comparison sheets; not
-  adopting it.
+  for reference on branch `spike/subpixel` (e4fafaf, with its comparison
+  sheets); probably won't adopt it. Next: HTTP stream input.
