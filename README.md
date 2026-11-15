@@ -62,7 +62,8 @@ To just listen: [phosphene.aibuilds.me/sodium-uv.mp3](https://phosphene.aibuilds
   `lg compile`, which needs Go and an lg newer than 1.13.0 (`just build
   /path/to/lg`). As of 2026-11-15 that cut draw time per frame at
   160×96 px to about half on plasma, two thirds on milk and a third on
-  superscope; the compiled binary gives up live editing.
+  superscope. It plays files, URLs, `--mic` and `--pcm` like `bin/phosphene`;
+  edits to `src/` need a rebuild.
 
 See [PLAN.md](PLAN.md) for scope, the runtime direction (VM now, AOT kernels
 next), and the backlog.
