@@ -5,3 +5,10 @@ test:
 # Rewrite the reference frames after an intended visual change.
 update-refs:
     PHOSPHENE_UPDATE_REF=1 lg -source-paths src:test test/run.lg
+
+# A native binary at out/phosphene through `lg compile`, which needs Go and an
+# lg with the subcommand (let-go main until v1.14.0; 1.13.0 has none). Every
+# namespace is passed so the render kernels lower too, not just the entry.
+build lg="lg":
+    mkdir -p out
+    cd src && {{lg}} compile -o ../out/phosphene phosphene/cli.lg $(find phosphene -name '*.lg' ! -name cli.lg | sort)
