@@ -13,6 +13,7 @@
 
 (defn- usage []
   (println "usage: phosphene <audio-file> [--fx NAME [--preset N]] [--fps N] [--scale N] [--mute] [--no-post]")
+  (println "       phosphene <http(s) URL> [--fx NAME [--preset N]] [--fps N] [--scale N] [--mute] [--no-post]")
   (println "       phosphene --mic [DEVICE] [--fx NAME [--preset N]] [--fps N] [--scale N] [--no-post]")
   (println "       phosphene --pcm PORT [...]   s16le mono 22050 Hz from a TCP server on localhost")
   (println "       phosphene <audio-file> --dump SECONDS OUT.ppm [--size WxH] [--warm S] [--fx NAME]")
@@ -42,7 +43,7 @@
         "--frames" (recur (drop 3 more) (assoc opts :frames [(parse-double (first more))
                                                             (parse-double (second more))
                                                             (nth more 2)]))
-        (recur more (assoc opts :file a)))
+        (recur more (assoc opts (if (live/url? a) :url :file) a)))
       opts)))
 
 (defn- screen-fb
@@ -122,7 +123,9 @@
                         (str (apply str (repeat n "▮")) (apply str (repeat (- 8 n) "·")))))
         beat (if (> (:beat-env a) 0.5) (str ESC "[38;2;255;80;200m●") (str ESC "[38;2;70;60;90m○"))
         left (str " ◆ phosphene  " name (if auto "  ⟳" "") "  "
-                  (if dur (str (mm t) "/" (mm dur)) (str (mm t) (if (:stalled a) "  no signal" "  live")))
+                  (cond dur (str (mm t) "/" (mm dur))
+                        paused (mm t)
+                        :else (str (mm t) (if (:stalled a) "  no signal" "  live")))
                   (if paused "  ⏸" ""))
         right (str (if (:level a) (str "in " (meter (* 2 (:level a))) " ") "")
                    "bass " (meter (:bass-att a)) " mid " (meter (:mid-att a))
@@ -132,9 +135,22 @@
          left (apply str (repeat pad " ")) beat " " ESC "[38;2;150;140;190m" right
          ESC "[K" ESC "[0m")))
 
-(defn- open-source
+(defn- open-url
+  "For a URL: the live source and the ffmpeg pid, which plays the audio too."
+  [url mute]
+  (let [{:keys [pid pipe log]} (live/start-url url mute)
+        src (live/read-pipe pipe)]
+    (if (live/await-audio src)
+      [src pid]
+      (do (signal pid "TERM")
+          (println (str "\ncouldn't play " url
+                        (let [msg (when (file-exists? log) (string/trim (slurp log)))]
+                          (when (seq msg) (str ": " msg)))))
+          (os/exit 1)))))
+
+(defn- open-socket
   "For --mic/--pcm: the live source and the ffmpeg pid to stop on exit."
-  [{:keys [mic pcm]}]
+  [mic pcm]
   (let [port (or pcm (os/free-port))
         [pid log] (when mic (live/start-mic mic port))]
     (try
@@ -146,15 +162,21 @@
         (when mic (println "devices: ffmpeg -f avfoundation -list_devices true -i ''"))
         (os/exit 1)))))
 
+(defn- open-source
+  "For a URL, --mic or --pcm: the live source and the ffmpeg pid to stop on exit."
+  [{:keys [url mic pcm mute]}]
+  (if url (open-url url mute) (open-socket mic pcm)))
+
 (defn- live [{:keys [file fps scale mute] :as opts}]
   (let [size (term/size)]
     (when-not size (println "not a terminal; try --dump or --bench") (os/exit 1))
     (term/write (cond file "decoding…"
+                      (:url opts) "connecting…"
                       (:mic opts) "listening… (allow microphone access if macOS asks)"
                       :else "listening…"))
     (term/flush)
     (let [track  (when file (audio/load file))
-          [src mic-pid] (when-not file (open-source opts))
+          [src src-pid] (when-not file (open-source opts))
           [cols rows] size
           target (/ 1000.0 (or fps 30))
           right  (str ESC "[C") left (str ESC "[D")]
@@ -162,7 +184,8 @@
       (term/alternate-screen)
       (term/hide-cursor)
       (term/clear)
-      (let [pid (when (and file (not mute)) (start-player file))]
+      ;; The process to pause: afplay for a file, the ffmpeg playing a URL.
+      (let [pid (if file (when-not mute (start-player file)) (when (:url opts) src-pid))]
         (try
           (loop [d (director (screen-fb cols (dec rows) (or scale 2)) opts)
                  ls (listen/make-state)
@@ -185,7 +208,9 @@
                     resized (or (not= c (:cols f)) (not= (dec r) (:rows f)))]
                 (cond
                   (or (= k "q") (= k (str (char 3))) (= k ESC)
-                      (and track (> t (+ 0.5 (:duration track))))) nil
+                      (and track (> t (+ 0.5 (:duration track))))
+                      ;; A URL's ffmpeg exits when the stream ends.
+                      (and (:url opts) @(:closed src))) nil
                   resized
                   (let [nd (dir/make (screen-fb c (dec r) (or scale 2)) (:i (:cur d)) (:auto d) (some? (:post d)))]
                     (term/clear)
@@ -195,8 +220,9 @@
                   (= k "a")   (recur (update d :auto not) ls t0 paused-at frame-start fps-avg)
                   (= k "b")   (recur (dir/toggle-post d :bloom) ls t0 paused-at frame-start fps-avg)
                   (= k "c")   (recur (dir/toggle-post d :cycle) ls t0 paused-at frame-start fps-avg)
-                  ;; A live source can't be paused, only ignored.
-                  (and (= k " ") track)
+                  ;; A URL pauses by stopping its ffmpeg, which can drop a
+                  ;; long-paused connection; --mic and --pcm can't pause.
+                  (and (= k " ") (or track (:url opts)))
                   (if paused-at
                     (do (signal pid "CONT")
                         (recur d ls (+ t0 (- (now-ms) paused-at)) nil frame-start fps-avg))
@@ -211,7 +237,8 @@
             (signal pid "CONT")
             (signal pid "TERM")
             (when src (live/disconnect! src))
-            (signal mic-pid "TERM")
+            (signal src-pid "CONT")
+            (signal src-pid "TERM")
             (term/show-cursor)
             (term/main-screen)
             (term/reset-style)
@@ -219,12 +246,12 @@
 
 (defn -main [& args]
   (let [opts (parse-args args)]
-    (case (count (keep opts [:file :mic :pcm]))
+    (case (count (keep opts [:file :url :mic :pcm]))
       0 (usage)
       1 nil
-      (do (println "pick one input: a file, --mic or --pcm") (os/exit 2)))
+      (do (println "pick one input: a file, a URL, --mic or --pcm") (os/exit 2)))
     (when (and (not (:file opts)) (some opts [:dump :bench :frames]))
-      (println "--dump, --bench and --frames need an audio file, not --mic or --pcm")
+      (println "--dump, --bench and --frames need an audio file, not a URL, --mic or --pcm")
       (os/exit 2))
     (if (and (:file opts) (or (:dump opts) (:bench opts) (:frames opts)))
       (headless opts)

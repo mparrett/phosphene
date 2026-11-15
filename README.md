@@ -14,6 +14,7 @@ Rendered headless from the repo at 192×54 cells. The [dev log](https://phosphen
     bin/phosphene track.mp3 --scale 1     # full half-block resolution (slower on the VM)
     bin/phosphene track.mp3 --dump 12.5 frame.ppm --size 160x48
     bin/phosphene track.mp3 --bench 60
+    bin/phosphene https://ice1.somafm.com/groovesalad-128-mp3   # an MP3/OGG URL or Icecast stream
     bin/phosphene --mic                   # system input; or --mic 1, --mic "MacBook Air Microphone"
     bin/phosphene --pcm 4000              # s16le mono 22050 Hz from a TCP server on localhost
 
@@ -45,6 +46,11 @@ To just listen: [phosphene.aibuilds.me/sodium-uv.mp3](https://phosphene.aibuilds
   unavailable and only key presses come in from JS, so neither decoding nor
   live input has a path. A browser version needs a sample channel from JS
   (an AudioWorklet writing into a shared ring) feeding the live path.
+- **URLs play on macOS only** (ffmpeg's audiotoolbox output). One ffmpeg
+  fetches the stream, plays it and feeds the picture, so a slow server stalls
+  sound and visuals together. Endless streams work; there's no seek, and a
+  long pause can drop the connection. Beats register as they land, as with
+  the mic.
 - **Mic input is macOS only** (ffmpeg's avfoundation). macOS grants mic access
   to the terminal app, or under tmux to whichever app started the tmux server;
   if it's denied, ffmpeg delivers silence and the HUD shows "no signal". Live
