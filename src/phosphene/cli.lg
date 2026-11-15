@@ -1,4 +1,4 @@
-(ns phosphene.main
+(ns phosphene.cli
   (:require [string] [math] [os] [term]
             [phosphene.audio :as audio]
             [phosphene.live :as live]
@@ -52,7 +52,7 @@
   (assoc (fb/make (max 8 (quot cols scale)) (max 8 (quot (* 2 rows) scale)))
          :cols cols :rows rows))
 
-(defn- director [shape {:keys [fx preset no-post]}]
+(defn- make-director [shape {:keys [fx preset no-post]}]
   (dir/make shape (if fx (dir/scene-index fx preset) (first dir/auto-order)) (nil? fx) (not no-post)))
 
 ;; ── Headless ─────────────────────────────────────────────────────────────
@@ -93,17 +93,17 @@
                   (count (filter pos? (seq (:onset track)))) " onsets"))
     (when dump
       (let [[t out] dump
-            [d _] (simulate track (director shape opts) (max 0.0 (- t (or warm 3.0))) t)]
+            [d _] (simulate track (make-director shape opts) (max 0.0 (- t (or warm 3.0))) t)]
         (spit out (fb/ppm (:shown d)))
         (println "wrote" out "—" (dir/label d))))
     (when frames
       (let [[t0 secs out] frames
             w0 (max 0.0 (- t0 (or warm 3.0)))
-            [d _] (simulate track (director shape opts) w0 t0)]
+            [d _] (simulate track (make-director shape opts) w0 t0)]
         (write-frames track d t0 secs out)))
     (when bench
       (let [t0 (min 30.0 (* 0.3 (:duration track)))
-            [d ms] (simulate track (director shape opts) t0 (+ t0 (/ bench 30.0)))
+            [d ms] (simulate track (make-director shape opts) t0 (+ t0 (/ bench 30.0)))
             a0 (now-ms)
             _  (dotimes [_ 10] (fb/ansi (:shown d) cols rows 1))
             ams (/ (- (now-ms) a0) 10.0)]
@@ -178,7 +178,7 @@
   [{:keys [url mic pcm mute]}]
   (if url (open-url url mute) (open-socket mic pcm)))
 
-(defn- live [{:keys [file fps scale mute] :as opts}]
+(defn- run-live [{:keys [file fps scale mute] :as opts}]
   (let [size (term/size)]
     (when-not size (println "not a terminal; try --dump or --bench") (os/exit 1))
     (term/write (cond file "decoding…"
@@ -199,7 +199,7 @@
       ;; The process to pause: afplay for a file, the ffmpeg playing a URL.
       (let [pid (if file (when-not mute (start-player file)) (when (:url opts) src-pid))]
         (try
-          (loop [d (director (screen-fb cols (dec rows) (or scale 2)) opts)
+          (loop [d (make-director (screen-fb cols (dec rows) (or scale 2)) opts)
                  ls (listen/make-state)
                  t0 (now-ms) paused-at nil
                  last (now-ms) fps-avg 30.0]
@@ -262,7 +262,8 @@
                 (println "stream ended:" msg)))))))))
 
 (defn -main [& args]
-  (let [opts (parse-args args)]
+  ;; Called bare at load below; lg compile's native entry passes the args.
+  (let [opts (parse-args (or args *command-line-args*))]
     (case (count (keep opts [:file :url :mic :pcm]))
       0 (usage)
       1 nil
@@ -272,6 +273,11 @@
       (os/exit 2))
     (if (and (:file opts) (or (:dump opts) (:bench opts) (:frames opts)))
       (headless opts)
-      (live opts))))
+      (run-live opts))))
 
-(apply -main *command-line-args*)
+;; Bare (-main), not (apply -main ...): lg compile recognises only this
+;; spelling as the entry call and leaves it out of the binary, whose native
+;; entry calls -main itself (nooga/let-go#1072). The namespace isn't
+;; phosphene.main for the same issue: it would lower to Go package main.
+(when-not *compiling-aot*
+  (-main))

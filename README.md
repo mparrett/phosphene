@@ -20,7 +20,8 @@ Rendered headless from the repo at 192×54 cells. The [dev log](https://phosphen
 
 Needs `lg` (let-go ≥ 1.13), `ffmpeg`, and `afplay` (macOS) for playback.
 `scripts/mk-test-track.py out.wav` writes a 40 s, 124 BPM test track.
-`just test` runs the tests; after an intended visual change, `just update-refs`
+`just build` compiles a native `out/phosphene` that takes the same arguments
+and draws a frame 1.5–3× faster (see below); `just test` runs the tests; after an intended visual change, `just update-refs`
 rewrites the reference frames in `test/fixtures/`.
 
 ## Music
@@ -57,8 +58,12 @@ To just listen: [phosphene.aibuilds.me/sodium-uv.mp3](https://phosphene.aibuilds
   input has no lookahead, so beats register as they land. A quiet room's
   steady hiss is gated to silence; anything with a pitch or a pulse passes.
 - **Speed.** On the let-go VM it runs at roughly 10–20 fps at 160×48 cells
-  (measured 2026-10-10); the hot loops are written for let-go's AOT
-  compiler, which is where smooth frame rates are meant to come from.
+  (measured 2026-10-10). `just build` lowers the hot loops to Go with
+  `lg compile`, which needs Go and an lg newer than 1.13.0 (`just build
+  /path/to/lg`). As of 2026-11-15 that cut draw time per frame at
+  160×96 px to about half on plasma, two thirds on milk and a third on
+  superscope. It plays files, URLs, `--mic` and `--pcm` like `bin/phosphene`;
+  edits to `src/` need a rebuild.
 
 See [PLAN.md](PLAN.md) for scope, the runtime direction (VM now, AOT kernels
 next), and the backlog.

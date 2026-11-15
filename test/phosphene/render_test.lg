@@ -17,11 +17,11 @@
     (when-not (zero? (:exit res))
       (throw (ex-info (str (first args) " failed: " (:out res) (:err res)) {})))))
 
-;; A subprocess, since main.lg runs on load. PHOSPHENE_SRC points it at
+;; A subprocess, since cli.lg runs on load. PHOSPHENE_SRC points it at
 ;; another source tree, so the render is of the code under test.
 (defn- dump [fx out]
   (let [src (or (not-empty (os/getenv "PHOSPHENE_SRC")) "src")]
-    (sh! "lg" "-source-paths" src (str src "/phosphene/main.lg")
+    (sh! "lg" "-source-paths" src (str src "/phosphene/cli.lg")
          (fx/kicks-wav) "--dump" "3.0" out "--size" "80x24" "--fx" fx)))
 
 (defn- ppm

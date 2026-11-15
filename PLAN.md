@@ -166,3 +166,13 @@ Each loop iteration appends one line: date, what landed, what's next.
   Space pauses by stopping ffmpeg; `--mute` paces with `-re`; a finite URL
   quits at its end; headless modes refuse URLs. Played an Icecast stream and
   MP3 and OGG URLs. Next: the streaming backlog.
+- 2026-11-15 — native build: `just build` runs `lg compile` over every
+  namespace (145 fns lower; the scopes with no lowerable defns stay
+  bytecode). Draw+listen ms/frame at 160×96 px, let-go main e37ed200, VM →
+  native: plasma 60 → 28, milk 71 → 47, superscope 43 → 14; ANSI encoding
+  ~15 → ~5. `-lowered-core` made no difference. Workarounds for lg compile
+  bugs: the entry namespace is `phosphene.cli`, not `phosphene.main`, and
+  its private fns aren't named `director` or `live` (fixes open as
+  nooga/let-go#1128 and #1126); the entry call is a bare `(-main)`, since
+  `(apply -main ...)` runs `-main` twice in the binary (#1072). Next: once
+  those merge, drop the renames and pass only the entry file (#1130).
