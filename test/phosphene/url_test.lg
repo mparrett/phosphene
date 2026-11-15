@@ -1,0 +1,66 @@
+(ns phosphene.url-test
+  "Plays URLs from a local HTTP server standing in for the network, muted
+  so the tests make no sound."
+  (:require [clojure.test :refer [deftest is testing]] [os] [net] [string]
+            [phosphene.audio :as audio] [phosphene.live :as live]
+            [phosphene.fixtures :as fx]))
+
+(defn- with-server
+  "Runs (f base-url) with an HTTP server on 127.0.0.1 serving dir."
+  [dir f]
+  (let [port (os/free-port)
+        pid  (string/trim (:out (os/sh "sh" "-c"
+                                       (str "python3 -m http.server " port " --bind 127.0.0.1 --directory "
+                                            (audio/shq dir) " >/dev/null 2>&1 & echo $!"))))]
+    (try
+      (loop [i 0]
+        (when-not (try (net/close! (net/dial "127.0.0.1" port)) true (catch e false))
+          (when (< i 100) (sleep 50) (recur (inc i)))))
+      (f (str "http://127.0.0.1:" port "/"))
+      (finally (os/sh "kill" pid)))))
+
+(defn- play
+  "Runs (f src audio?) on url, muted, then stops its ffmpeg and deletes
+  its log."
+  [url f]
+  (let [{:keys [pid pipe log]} (live/start-url url true)
+        src (live/read-pipe pipe)]
+    (try (f src (live/await-audio src))
+         (finally
+           (os/sh "kill" pid)
+           (os/sh "rm" "-f" log)))))
+
+(deftest url-detection
+  (is (live/url? "http://example.com/a.mp3"))
+  (is (live/url? "https://ice1.example.com/stream"))
+  (is (not (live/url? "music/track.mp3")))
+  (is (not (live/url? "httpfile.mp3")))
+  (is (not (live/url? "ftp://example.com/a.mp3"))))
+
+(deftest a-url-streams-every-sample-at-playback-pace
+  (let [wav  (fx/ramp-wav)
+        name (last (string/split wav "/"))
+        dir  (subs wav 0 (- (count wav) (count name) 1))]
+    (with-server dir
+      (fn [base]
+        (let [t0 (System/currentTimeMillis)]
+          (play (str base name)
+                (fn [src audio?]
+                  (is audio? "the first samples arrive")
+                  (is (loop [i 0]
+                        (cond @(:closed src) true
+                              (< i 100) (do (sleep 100) (recur (inc i)))
+                              :else false))
+                      "the source ends when the file does")
+                  (let [n @(:head src) ms (- (System/currentTimeMillis) t0)]
+                    (is (= (* 3 audio/SR) n) "every sample of the 3 s ramp")
+                    (is (every? #(= (aget (:ring src) %) (/ (- (mod % 65536) 32768) 32768.0)) (range n))
+                        "each sample exactly as encoded")
+                    (is (< 2500 ms 6000) (str "paced near real time, not decoded at once: " ms " ms"))))))))))
+
+(deftest a-bad-url-fails-without-audio
+  (testing "a missing file on a live server"
+    (with-server @fx/dir
+      (fn [base] (play (str base "nothing-here.mp3") (fn [_ audio?] (is (false? audio?)))))))
+  (testing "a server that isn't there"
+    (play (str "http://127.0.0.1:" (os/free-port) "/x.mp3") (fn [_ audio?] (is (false? audio?))))))

@@ -3,9 +3,10 @@
   clojure.test's run-tests alone doesn't."
   (:require [clojure.test :as t] [os] [phosphene.fixtures :as fx]
             [phosphene.audio-test] [phosphene.listen-test] [phosphene.live-test]
-            [phosphene.render-test]))
+            [phosphene.render-test] [phosphene.url-test]))
 
 (let [{:keys [fail error]} (try (t/run-tests 'phosphene.audio-test 'phosphene.listen-test
-                                             'phosphene.live-test 'phosphene.render-test)
+                                             'phosphene.live-test 'phosphene.render-test
+                                             'phosphene.url-test)
                                 (finally (fx/cleanup!)))]
   (os/exit (if (zero? (+ fail error)) 0 1)))

@@ -1,9 +1,8 @@
 (ns phosphene.live
-  "Live input: mono s16le PCM at audio/SR read from a localhost TCP socket.
-  lg has no way to spawn a process and read its stdout while it runs (os/sh
-  and os/exec* block until exit), and stdin belongs to the key reader, so
-  the source is a socket: --mic starts ffmpeg as the server, --pcm attaches
-  to any other one."
+  "Live input: mono s16le PCM at audio/SR, read as it arrives into a ring.
+  An http(s) URL is read from the stdout pipe of the ffmpeg that plays it.
+  --mic and --pcm read a localhost TCP socket: --mic starts ffmpeg as the
+  server, --pcm attaches to any other one."
   (:require [string] [math] [os] [net]
             [phosphene.audio :as audio] [phosphene.fft :as fft]
             [phosphene.listen :as listen]))
@@ -28,6 +27,9 @@
 ;; ffmpeg's own listen timeout is longer, and ends it if phosphene dies first.
 (def ^:private MIC-WAIT-S 60)
 (def ^:private PCM-WAIT-S 5)
+;; A slow server can take a while to send the first audio; past this the
+;; picture starts anyway and reads "no signal" until it does.
+(def ^:private URL-WAIT-S 15)
 
 (defn initial-state []
   {:pos 0 :lp 0.0 :prev 0.0 :avg 0.0 :since 100
@@ -50,21 +52,69 @@
 
 (defn running? [pid] (zero? (:exit (os/sh "kill" "-0" pid))))
 
+(defn url? [s] (boolean (re-find #"^https?://" s)))
+
+(defn start-url
+  "Starts ffmpeg reading the stream at url: it plays the audio itself (not
+  with mute) and writes the tap to its stdout, so speaker and picture share
+  one fetch and the device's clock paces both. Returns {:pid :pipe :log};
+  ffmpeg's stderr goes to the log."
+  [url mute]
+  (let [log (str (os/temp-dir) "/phosphene-url-" (System/nanoTime) ".log")
+        pidf (str log ".pid")
+        ;; Muted, nothing paces ffmpeg, so -re reads at the stream's own rate.
+        ff  (str "ffmpeg -nostdin -v error " (if mute "-re " "")
+                 ;; Retries cover a blip; past 10 s the stream is gone, and
+                 ;; ffmpeg's default of 120 s would leave "no signal" up.
+                 "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -i " (audio/shq url)
+                 (if mute "" " -map 0:a -f audiotoolbox -")
+                 " -map 0:a -ac 1 -ar " audio/SR " -f s16le pipe:1")
+        ;; lg can't read the child's pid from the Cmd, so the shell writes
+        ;; its own and execs ffmpeg in its place: same pid, for SIGSTOP.
+        cmd (os/exec "sh" "-c" (str "echo $$ > " (audio/shq pidf) "; exec " ff " 2>" (audio/shq log)))
+        pipe (.StdoutPipe cmd)]
+    (.Start cmd)
+    (let [pid (loop [i 0]
+                (let [s (when (file-exists? pidf) (string/trim (slurp pidf)))]
+                  (cond (seq s) s
+                        (< i 500) (do (sleep 10) (recur (inc i))))))]
+      (os/sh "rm" "-f" pidf)
+      (when-not pid
+        (throw (ex-info "ffmpeg didn't start" {:log log})))
+      {:pid pid :pipe pipe :log log})))
+
 (defn- feed!
-  "Appends the little-endian int16 samples in byte-array b to the ring.
-  lo is the low byte of a sample split across reads, or -1; returns the
-  same for the next read."
-  [^doubles ring head b lo]
-  (let [n (count b)]
-    (loop [i 0 lo lo h @head]
-      (if (< i n)
-        (let [x (bit-and (aget b i) 0xff)]
-          (if (neg? lo)
-            (recur (inc i) x h)
-            (let [v (+ lo (* 256 x))]
-              (aset ring (mod h RING) (/ (double (if (> v 32767) (- v 65536) v)) 32768.0))
-              (recur (inc i) -1 (inc h)))))
-        (do (reset! head h) lo)))))
+  "Appends the little-endian int16 samples in the first n bytes of b to the
+  ring. lo is the low byte of a sample split across reads, or -1; returns
+  the same for the next read."
+  [^doubles ring head b n lo]
+  (loop [i 0 lo lo h @head]
+    (if (< i n)
+      (let [x (bit-and (aget b i) 0xff)]
+        (if (neg? lo)
+          (recur (inc i) x h)
+          (let [v (+ lo (* 256 x))]
+            (aset ring (mod h RING) (/ (double (if (> v 32767) (- v 65536) v)) 32768.0))
+            (recur (inc i) -1 (inc h)))))
+      (do (reset! head h) lo))))
+
+(defn- source
+  "Reads chunks from read! into a ring buffer on a future until it returns
+  nil or throws. read! returns [byte-array n]. close! ends the transport.
+  Returns the source for poll!."
+  [read! close!]
+  (let [ring (double-array RING) head (atom 0) closed (atom false)]
+    (future
+      (try
+        (loop [lo -1]
+          (when-let [[b n] (read!)]
+            (recur (feed! ring head b n lo))))
+        (catch e nil))
+      (reset! closed true))
+    {:close! close! :ring ring :head head :closed closed
+     :window (double-array fft/N)
+     :st (atom (assoc (initial-state) :seen 0 :seen-ms (System/currentTimeMillis)
+                      :sound-ms (System/currentTimeMillis)))}))
 
 (defn connect
   "Dials the PCM server on port, retrying while it starts up, and reads it
@@ -78,20 +128,27 @@
                       (sleep 100) (recur (inc i)))))]
     (when-not conn
       (throw (ex-info (str "no PCM server on port " port) {})))
-    (let [ring (double-array RING) head (atom 0) closed (atom false)]
-      (future
-        (try
-          (loop [lo -1]
-            (when-let [b (net/read! conn 4096)]
-              (recur (feed! ring head b lo))))
-          (catch e nil))
-        (reset! closed true))
-      {:conn conn :ring ring :head head :closed closed
-       :window (double-array fft/N)
-       :st (atom (assoc (initial-state) :seen 0 :seen-ms (System/currentTimeMillis)
-                        :sound-ms (System/currentTimeMillis)))})))
+    (source #(when-let [b (net/read! conn 4096)] [b (alength b)])
+            #(net/close! conn))))
 
-(defn disconnect! [src] (try (net/close! (:conn src)) (catch e nil)))
+(defn read-pipe
+  "Reads the stdout pipe of a started process (start-url) into a ring.
+  The pipe reports EOF by throwing, which ends the source."
+  [pipe]
+  (source #(let [b (byte-array 4096) n (.Read pipe b)] [b n])
+          #(.Close pipe)))
+
+(defn await-audio
+  "Waits up to URL-WAIT-S for src's first samples. False if it ended
+  first with none, as a bad URL or an unreachable server does."
+  [src]
+  (loop [i 0]
+    (cond (pos? @(:head src)) true
+          @(:closed src) false
+          (< i (* 10 URL-WAIT-S)) (do (sleep 100) (recur (inc i)))
+          :else true)))
+
+(defn disconnect! [src] (try ((:close! src)) (catch e nil)))
 
 (defn- hop-levels
   "Kernel: [rms bass-rms lp'] over samples [s0, s0+HOP) of buf, read modulo

@@ -64,6 +64,14 @@ wavefunction interference · raymarched SDF · strange attractor · spectrogram
 waterfall · CRT/chromatic-aberration post chain · beat-synced director ·
 agent-style HUD strip.
 
+## Backlog — streaming
+
+Queue with `n` for next · `o` to type a URL · ICY StreamTitle in the HUD ·
+`--delay` lookahead so beats lead the sound · crossfade between tracks, either
+through soundstream as the queueing daemon (phosphene plays its Icecast mount)
+or in-process through let-go's `*audio*` mixer once lg can stream to it
+(nooga/let-go#1127, draft).
+
 ## Later phase
 
 Browser build. let-go's WASM build has no `os/sh` or `net`, so samples
@@ -151,3 +159,10 @@ Each loop iteration appends one line: date, what landed, what's next.
 - 2026-11-13 — subpixel spike (`--sub bayer|rgbw|lcd|scan`, 2026-10-13) kept
   for reference on branch `spike/subpixel` (e4fafaf, with its comparison
   sheets); probably won't adopt it. Next: HTTP stream input.
+- 2026-11-14 — HTTP stream input: a positional `http(s)://` argument starts
+  one ffmpeg that plays the stream through audiotoolbox and writes the tap to
+  its stdout, which a future reads into the same ring as `--mic` (lg reads a
+  child's stdout fine; only `read-line` on a pipe is broken, nooga/let-go#961).
+  Space pauses by stopping ffmpeg; `--mute` paces with `-re`; a finite URL
+  quits at its end; headless modes refuse URLs. Played an Icecast stream and
+  MP3 and OGG URLs. Next: the streaming backlog.

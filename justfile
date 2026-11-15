@@ -1,4 +1,4 @@
-# Decode, onsets, live input over TCP, and one headless frame per engine.
+# Decode, onsets, live input over TCP and HTTP, and one headless frame per engine.
 test:
     lg -source-paths src:test test/run.lg
 
