@@ -64,7 +64,9 @@
         pidf (str log ".pid")
         ;; Muted, nothing paces ffmpeg, so -re reads at the stream's own rate.
         ff  (str "ffmpeg -nostdin -v error " (if mute "-re " "")
-                 "-reconnect 1 -reconnect_streamed 1 -i " (audio/shq url)
+                 ;; Retries cover a blip; past 10 s the stream is gone, and
+                 ;; ffmpeg's default of 120 s would leave "no signal" up.
+                 "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -i " (audio/shq url)
                  (if mute "" " -map 0:a -f audiotoolbox -")
                  " -map 0:a -ac 1 -ar " audio/SR " -f s16le pipe:1")
         ;; lg can't read the child's pid from the Cmd, so the shell writes
@@ -74,8 +76,11 @@
     (.Start cmd)
     (let [pid (loop [i 0]
                 (let [s (when (file-exists? pidf) (string/trim (slurp pidf)))]
-                  (if (or (seq s) (> i 100)) s (do (sleep 10) (recur (inc i))))))]
+                  (cond (seq s) s
+                        (< i 500) (do (sleep 10) (recur (inc i))))))]
       (os/sh "rm" "-f" pidf)
+      (when-not pid
+        (throw (ex-info "ffmpeg didn't start" {:log log})))
       {:pid pid :pipe pipe :log log})))
 
 (defn- feed!

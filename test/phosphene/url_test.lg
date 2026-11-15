@@ -19,10 +19,16 @@
       (f (str "http://127.0.0.1:" port "/"))
       (finally (os/sh "kill" pid)))))
 
-(defn- play [url]
-  (let [{:keys [pid pipe]} (live/start-url url true)
+(defn- play
+  "Runs (f src audio?) on url, muted, then stops its ffmpeg and deletes
+  its log."
+  [url f]
+  (let [{:keys [pid pipe log]} (live/start-url url true)
         src (live/read-pipe pipe)]
-    {:pid pid :src src :audio? (live/await-audio src)}))
+    (try (f src (live/await-audio src))
+         (finally
+           (os/sh "kill" pid)
+           (os/sh "rm" "-f" log)))))
 
 (deftest url-detection
   (is (live/url? "http://example.com/a.mp3"))
@@ -37,20 +43,24 @@
         dir  (subs wav 0 (- (count wav) (count name) 1))]
     (with-server dir
       (fn [base]
-        (let [t0 (System/currentTimeMillis)
-              {:keys [src audio?]} (play (str base name))]
-          (is audio? "the first samples arrive")
-          (is (loop [i 0] (cond @(:closed src) true (< i 100) (do (sleep 100) (recur (inc i))) :else false))
-              "the source ends when the file does")
-          (let [n @(:head src) ms (- (System/currentTimeMillis) t0)]
-            (is (= (* 3 audio/SR) n) "every sample of the 3 s ramp")
-            (is (every? #(= (aget (:ring src) %) (/ (- (mod % 65536) 32768) 32768.0)) (range n))
-                "each sample exactly as encoded")
-            (is (< 2500 ms 6000) (str "paced near real time, not decoded at once: " ms " ms"))))))))
+        (let [t0 (System/currentTimeMillis)]
+          (play (str base name)
+                (fn [src audio?]
+                  (is audio? "the first samples arrive")
+                  (is (loop [i 0]
+                        (cond @(:closed src) true
+                              (< i 100) (do (sleep 100) (recur (inc i)))
+                              :else false))
+                      "the source ends when the file does")
+                  (let [n @(:head src) ms (- (System/currentTimeMillis) t0)]
+                    (is (= (* 3 audio/SR) n) "every sample of the 3 s ramp")
+                    (is (every? #(= (aget (:ring src) %) (/ (- (mod % 65536) 32768) 32768.0)) (range n))
+                        "each sample exactly as encoded")
+                    (is (< 2500 ms 6000) (str "paced near real time, not decoded at once: " ms " ms"))))))))))
 
 (deftest a-bad-url-fails-without-audio
   (testing "a missing file on a live server"
     (with-server @fx/dir
-      (fn [base] (is (false? (:audio? (play (str base "nothing-here.mp3"))))))))
+      (fn [base] (play (str base "nothing-here.mp3") (fn [_ audio?] (is (false? audio?)))))))
   (testing "a server that isn't there"
-    (is (false? (:audio? (play (str "http://127.0.0.1:" (os/free-port) "/x.mp3")))))))
+    (play (str "http://127.0.0.1:" (os/free-port) "/x.mp3") (fn [_ audio?] (is (false? audio?))))))
